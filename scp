@@ -44,7 +44,7 @@ pcall(function()
 end)
 
 -- ─── PERSISTENCE ──────────────────────────────────────────────────────────────
-local SAVE_FILE = "rivals_sc_v3.json"
+local SAVE_FILE = "rivals_sc_v2.json"
 
 local function saveData(equippedSkins, keybind)
     pcall(function()
@@ -590,7 +590,7 @@ end
 
 -- ─── ROOT ─────────────────────────────────────────────────────────────────────
 local ScreenGui = inst("ScreenGui", {
-    Name = "RivalsScV3", ResetOnSpawn = false,
+    Name = "RivalsSc2", ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true,
 }, PlayerGui)
 
@@ -608,7 +608,7 @@ inst("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), 
 local dot = inst("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 14, 0.5, -3), BackgroundColor3 = T.ACCENT, BorderSizePixel = 0}, TitleBar); corner(dot, 3)
 inst("TextLabel", {
     Size = UDim2.new(0, 300, 1, 0), Position = UDim2.new(0, 26, 0, 0),
-    BackgroundTransparency = 1, Text = "Rivals  —  Skin Changer  V3 Fixed",
+    BackgroundTransparency = 1, Text = "Rivals  —  Skin Changer  V2 Beta",
     Font = Enum.Font.GothamBold, TextSize = 13,
     TextColor3 = T.PRI, TextXAlignment = Enum.TextXAlignment.Left,
 }, TitleBar)
@@ -1122,6 +1122,6 @@ local active = 0; for _, s in pairs(EquippedSkins) do if s and s ~= "Default" th
 if active > 0 then StatusBadge.Text = "● " .. active .. " active"; StatusBadge.TextColor3 = T.GREEN end
 
 print(string.format(
-    "[Rivals SC V3 Fixed] %d weapons · %d skins · Active: %d · Keybind: %s",
+    "[Rivals SC V2 Fixed] %d weapons · %d skins · Active: %d · Keybind: %s",
     #WeaponList, total, active, tostring(State.keybind.Name)
 ))
