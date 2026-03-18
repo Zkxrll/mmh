@@ -1,18 +1,3 @@
---[[
-    RIVALS SKIN CHANGER — V3 Final Fixed
-
-    Engine A : ClientViewModel.new hook  — game-native rendering, correct anims + sounds
-    Engine B : WeldConstraint visual     — overlay for skins that need visual patching
-
-    FIXES:
-    • SKIP_RC_NAME list — prevents weapon disappearing for skins not registered
-      in the game's internal viewmodel config (Desert Eagle, Keyvolver, etc.)
-    • NEEDS_VISUAL_OVERRIDE list — runs Engine B on top of Engine A for those skins
-    • GROUP_REMAP — maps Keyvolver Bullets1-6 → live Bullets group
-    • onFirstPerson + refreshAllVisual both handle NEEDS_VISUAL_OVERRIDE skins
-    • NEEDS_VISUAL_OVERRIDE at module level so all functions can access it
-]]
-
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
