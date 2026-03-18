@@ -1,964 +1,1142 @@
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local HttpService      = game:GetService("HttpService")
-local RS               = game:GetService("ReplicatedStorage")
-local LocalPlayer      = Players.LocalPlayer
-local PlayerGui        = LocalPlayer:WaitForChild("PlayerGui")
-local PlayerName       = LocalPlayer.Name
-local PlayerScripts    = LocalPlayer:WaitForChild("PlayerScripts", 15)
-local ViewModels       = PlayerScripts and PlayerScripts:FindFirstChild("Assets")
-                         and PlayerScripts.Assets:FindFirstChild("ViewModels")
-local FirstPerson      = nil
+--[[
+    RIVALS SKIN CHANGER — V3 Final Fixed
 
-local VMA = nil
+    Engine A : ClientViewModel.new hook  — game-native rendering, correct anims + sounds
+    Engine B : WeldConstraint visual     — overlay for skins that need visual patching
+
+    FIXES:
+    • SKIP_RC_NAME list — prevents weapon disappearing for skins not registered
+      in the game's internal viewmodel config (Desert Eagle, Keyvolver, etc.)
+    • NEEDS_VISUAL_OVERRIDE list — runs Engine B on top of Engine A for those skins
+    • GROUP_REMAP — maps Keyvolver Bullets1-6 → live Bullets group
+    • onFirstPerson + refreshAllVisual both handle NEEDS_VISUAL_OVERRIDE skins
+    • NEEDS_VISUAL_OVERRIDE at module level so all functions can access it
+]]
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
+local HttpService       = game:GetService("HttpService")
+local TweenService      = game:GetService("TweenService")
+local LocalPlayer       = Players.LocalPlayer
+local PlayerGui         = LocalPlayer:WaitForChild("PlayerGui")
+local PlayerScripts     = LocalPlayer:WaitForChild("PlayerScripts", 15)
+local PlayerName        = LocalPlayer.Name
+
+local ViewModels = PlayerScripts
+    and PlayerScripts:FindFirstChild("Assets")
+    and PlayerScripts.Assets:FindFirstChild("ViewModels")
+
+-- ─── GAME MODULE REFERENCES ───────────────────────────────────────────────────
+local CosmeticLibrary, ItemLibrary, ReplicatedClass, ClientViewModel
+
 pcall(function()
-    VMA = require(PlayerScripts.Modules.ClientReplicatedClasses
-        .ClientFighter.ClientItem.ClientViewModel.ViewModelAnimator)
+    CosmeticLibrary = require(ReplicatedStorage:WaitForChild("Modules", 5)
+        :WaitForChild("CosmeticLibrary", 5))
+end)
+pcall(function()
+    ItemLibrary = require(ReplicatedStorage.Modules:WaitForChild("ItemLibrary", 5))
+end)
+pcall(function()
+    ReplicatedClass = require(ReplicatedStorage.Modules:WaitForChild("ReplicatedClass", 5))
+end)
+pcall(function()
+    ClientViewModel = require(PlayerScripts
+        :WaitForChild("Modules", 5)
+        :WaitForChild("ClientReplicatedClasses", 5)
+        :WaitForChild("ClientFighter", 5)
+        :WaitForChild("ClientItem", 5)
+        :WaitForChild("ClientViewModel", 5))
 end)
 
-local AnimLibInfo = nil
-pcall(function() AnimLibInfo = require(RS.Modules.AnimationLibrary).Info end)
-
-local function toKey(n) return n:lower():gsub("[^%a%d]","") end
-local function extractWeaponType(name)
-    return name:match("^.+ %- (.+) %- .+$") or name
-end
-local function getSkinSlots(wk, sk)
-    if not AnimLibInfo then return {} end
-    local res, prefix = {}, wk.."_"..sk.."_"
-    for k,d in pairs(AnimLibInfo) do
-        if type(k)=="string" and k:sub(1,#prefix)==prefix then
-            local slot=k:sub(#prefix+1)
-            if d and d.AnimationID then res[slot]=d.AnimationID end
-        end
+local RC_DATA, RC_SKIN, RC_NAME
+pcall(function()
+    if ReplicatedClass then
+        RC_DATA = ReplicatedClass:ToEnum("Data")
+        RC_SKIN = ReplicatedClass:ToEnum("Skin")
+        RC_NAME = ReplicatedClass:ToEnum("Name")
     end
-    return res
-end
+end)
 
--- ─── PERSISTENCE ─────────────────────────────────────────────────────────────
-local SAVE_FILE = "rivals_skinchanger.json"
+-- ─── PERSISTENCE ──────────────────────────────────────────────────────────────
+local SAVE_FILE = "rivals_sc_v3.json"
 
-local function saveData(pendingApply, keybind)
-    local data = {skins={}, keybind=tostring(keybind)}
-    for w, sm in pairs(pendingApply) do data.skins[w] = sm.Name end
-    pcall(function() writefile(SAVE_FILE, HttpService:JSONEncode(data)) end)
+local function saveData(equippedSkins, keybind)
+    pcall(function()
+        writefile(SAVE_FILE, HttpService:JSONEncode({
+            skins   = equippedSkins,
+            keybind = tostring(keybind),
+        }))
+    end)
 end
 
 local function loadData()
-    local ok, content = pcall(function() return readfile(SAVE_FILE) end)
-    if not ok or not content or content=="" then return {}, Enum.KeyCode.RightAlt end
-    local ok2, data = pcall(function() return HttpService:JSONDecode(content) end)
-    if not ok2 or type(data)~="table" then return {}, Enum.KeyCode.RightAlt end
+    local ok, raw = pcall(readfile, SAVE_FILE)
+    if not ok or not raw or raw == "" then return {}, Enum.KeyCode.RightAlt end
+    local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok2 or type(data) ~= "table" then return {}, Enum.KeyCode.RightAlt end
     local kb = Enum.KeyCode.RightAlt
-    if data.keybind then
-        pcall(function() kb = Enum.KeyCode[data.keybind] end)
-    end
+    pcall(function() if data.keybind then kb = Enum.KeyCode[data.keybind] end end)
     return data.skins or {}, kb
 end
 
--- ─── ANIMATION ENGINE ────────────────────────────────────────────────────────
-local VMAInstances  = {}
-local ActiveSkins   = {}
-local AnimOriginals = {}
-local TrackCache    = {}
+-- ─── STATE ────────────────────────────────────────────────────────────────────
+local EquippedSkins = {}
+local savedSkins, savedKeybind = loadData()
+for w, s in pairs(savedSkins) do EquippedSkins[w] = s end
 
-local function getOrLoadTrack(wType, slotNorm, animId, vmaInst)
-    TrackCache[wType] = TrackCache[wType] or {}
-    local cached = TrackCache[wType][slotNorm]
-    if cached then return cached end
-    local animator
-    pcall(function()
-        animator = vmaInst.ClientViewModel.Model:FindFirstChildWhichIsA("Animator",true)
-    end)
-    if not animator then return nil end
-    local anim = Instance.new("Animation")
-    anim.AnimationId = animId
-    local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
-    if ok and track then TrackCache[wType][slotNorm]=track; return track end
-end
+local State = {
+    keybind   = savedKeybind or Enum.KeyCode.RightAlt,
+    rebinding = false,
+    enabled   = true,
+}
 
-local function clearSkin(wType)
-    local orig=AnimOriginals[wType]; local vmaInst=VMAInstances[wType]
-    if orig and vmaInst then
-        for slotKey, data in pairs(orig) do
-            pcall(function()
-                local cur=vmaInst._animation_tracks and vmaInst._animation_tracks[slotKey]
-                if cur and cur.IsPlaying then cur:Stop(0) end
-            end)
-            if vmaInst._animation_tracks    and data.track   then vmaInst._animation_tracks[slotKey]=data.track     end
-            if vmaInst._viewmodel_animations and data.animKey then vmaInst._viewmodel_animations[slotKey]=data.animKey end
+-- ─── SKIN LISTS ───────────────────────────────────────────────────────────────
+local SkinLists = {
+    ["Assault Rifle"]     = {"Default","AK-47","AUG","Tommy Gun","Boneclaw Rifle","Gingerbread AUG","AKEY-47","10B Visits","Phoenix Rifle","Glorious Assault Rifle"},
+    ["Bow"]               = {"Default","Compound Bow","Raven Bow","Dream Bow","Bat Bow","Frostbite Bow","Beloved Bow","Balloon Bow","Key Bow","Glorious Bow"},
+    ["Burst Rifle"]       = {"Default","Electro Rifle","Aqua Burst","FAMAS","Spectral Burst","Pine Burst","Keyst Rifle","Glorious Burst Rifle"},
+    ["Crossbow"]          = {"Default","Pixel Crossbow","Harpoon Crossbow","Violin Crossbow","Crossbone","Frostbite Crossbow","Arch Crossbow","Glorious Crossbow"},
+    ["Distortion"]        = {"Default","Plasma Distortion","Magma Distortion","Cyber Distortion","Experiment D15","Sleighstortion","Electropunk Distortion","Glorious Distortion"},
+    ["Energy Rifle"]      = {"Default","Hacker Rifle","Hydro Rifle","Void Rifle","Soul Rifle","New Year Energy Rifle","Apex Rifle","Glorious Energy Rifle"},
+    ["Flamethrower"]      = {"Default","Pixel Flamethrower","Lamethrower","Glitterthrower","Jack O'Thrower","Snowblower","Keythrower","Rainbowthrower","Spray Bottle","Glorious Flamethrower"},
+    ["Grenade Launcher"]  = {"Default","Swashbuckler","Uranium Launcher","Gearnade Launcher","Skull Launcher","Snowball Launcher","Balloon Launcher","Glorious Grenade Launcher"},
+    ["Gunblade"]          = {"Default","Hyper Gunblade","Crude Gunblade","Gunsaw","Boneblade","Elf's Gunblade","Glorious Gunblade"},
+    ["Minigun"]           = {"Default","Lasergun 3000","Pixel Minigun","Fighter Jet","Pumpkin Minigun","Wrapped Minigun","Glorious Minigun"},
+    ["Paintball Gun"]     = {"Default","Slime Gun","Boba Gun","Ketchup Gun","Brain Gun","Snowball Gun","Money Gun","Paintballoon Gun","Glorious Paintball Gun"},
+    ["RPG"]               = {"Default","Nuke Launcher","Spaceship Launcher","Squid Launcher","Pumpkin Launcher","Firework Launcher","Pencil Launcher","RPKEY","Glorious RPG"},
+    ["Shotgun"]           = {"Default","Balloon Shotgun","Hyper Shotgun","Cactus Shotgun","Broomstick","Wrapped Shotgun","Shotkey","Glorious Shotgun"},
+    ["Sniper"]            = {"Default","Pixel Sniper","Hyper Sniper","Event Horizon","Eyething Sniper","Gingerbread Sniper","Keyper","Glorious Sniper"},
+    ["Daggers"]           = {"Default","Aces","Paper Planes","Shurikens","Bat Daggers","Cookies","Crystal Daggers","Broken Hearts","Keynais","Glorious Daggers"},
+    ["Energy Pistols"]    = {"Default","Hacker Pistols","Void Pistols","Hydro Pistols","Soul Pistols","New Year Energy Pistols","Apex Pistols","Hyperlaser Guns","Glorious Energy Pistols"},
+    ["Exogun"]            = {"Default","Singularity","Ray Gun","Repulsor","Exogourd","Midnight Festive Exogun","Wondergun","Glorious Exogun"},
+    ["Flare Gun"]         = {"Default","Firework Gun","Dynamite Gun","Banana Flare","Vexed Flare Gun","Wrapped Flare Gun","Glorious Flare Gun"},
+    ["Handgun"]           = {"Default","Blaster","Hand Gun","Gumball Handgun","Pumpkin Handgun","Gingerbread Handgun","Pixel Handgun","Towerstone Handgun","Warp Handgun","Stealth Handgun","Glorious Handgun"},
+    ["Revolver"]          = {"Default","Desert Eagle","Sheriff","Peppergun","Boneclaw Revolver","Peppermint Sheriff","Keyvolver","Glorious Revolver"},
+    ["Shorty"]            = {"Default","Not So Shorty","Lovely Shorty","Balloon Shorty","Demon Shorty","Wrapped Shorty","Too Shorty","Glorious Shorty"},
+    ["Slingshot"]         = {"Default","Stick","Goalpost","Harp","Boneshot","Reindeer Slingshot","Lucky Horseshoe","Glorious Slingshot"},
+    ["Spray"]             = {"Default","Lovely Spray","Nail Gun","Pine Spray","Key Spray","Boneclaw Spray","Glorious Spray"},
+    ["Uzi"]               = {"Default","Water Uzi","Electro Uzi","Keyzi","Demon Uzi","Pine Uzi","Glorious Uzi"},
+    ["Warper"]            = {"Default","Electropunk Warper","Experiment W4","Frost Warper","Glitter Warper","Arcane Warper","Hotel Bell","Glorious Warper"},
+    ["Battle Axe"]        = {"Default","The Shred","Ban Axe","Cerulean Axe","Balloon Axe","Nordic Axe","Keyttle Axe","Caladbolg","Glorious Battle Axe"},
+    ["Chainsaw"]          = {"Default","Blobsaw","Handsaws","Mega Drill","Buzzsaw","Festive Buzzsaw","Glorious Chainsaw"},
+    ["Fists"]             = {"Default","Boxing Gloves","Brass Knuckles","Fists of Hurt","Pumpkin Claws","Festive Fists","Fist","Glorious Fists"},
+    ["Katana"]            = {"Default","Saber","Lightning Bolt","Stellar Katana","Evil Trident","New Year Katana","Keytana","Arch Katana","Crystal Katana","Pixel Katana","Linked Sword","Glorious Katana"},
+    ["Knife"]             = {"Default","Chancla","Karambit","Balisong","Machete","Candy Cane","Keyrambit","Keylisong","Glorious Knife"},
+    ["Riot Shield"]       = {"Default","Door","Energy Shield","Masterpiece","Sled","Glorious Riot Shield"},
+    ["Scythe"]            = {"Default","Scythe of Death","Anchor","Sakura Scythe","Bat Scythe","Cryo Scythe","Crystal Scythe","Keythe","Bug Net","Glorious Scythe"},
+    ["Trowel"]            = {"Default","Plastic Shovel","Garden Shovel","Paintbrush","Pumpkin Carver","Snow Shovel","Glorious Trowel"},
+    ["Maul"]              = {"Default","Ban Hammer","Sleigh Maul","Ice Maul","Glorious Maul"},
+    ["Flashbang"]         = {"Default","Disco Ball","Camera","Lightbulb","Skullbang","Shining Star","Pixel Flashbang","Glorious Flashbang"},
+    ["Freeze Ray"]        = {"Default","Temporal Ray","Bubble Ray","Gum Ray","Spider Ray","Wrapped Freeze Ray","Glorious Freeze Ray"},
+    ["Grenade"]           = {"Default","Whoopee Cushion","Water Balloon","Dynamite","Soul Grenade","Jingle Grenade","Keynade","Cuddle Bomb","Frozen Grenade","Glorious Grenade"},
+    ["Jump Pad"]          = {"Default","Trampoline","Bounce House","Shady Chicken Sandwich","Glorious Jump Pad"},
+    ["Medkit"]            = {"Default","Sandwich","Laptop","Medkitty","Bucket of Candy","Milk & Cookies","Box of Chocolates","Briefcase","Glorious Medkit"},
+    ["Molotov"]           = {"Default","Coffee","Torch","Lava Lamp","Vexed Candle","Hot Coals","Arch Molotov","Glorious Molotov"},
+    ["Satchel"]           = {"Default","Advanced Satchel","Notebook Satchel","Bag o' Money","Potion Satchel","Suspicious Gift","Glorious Satchel"},
+    ["Smoke Grenade"]     = {"Default","Emoji Cloud","Balance","Hourglass","Eyeball","Snowglobe","Glorious Smoke Grenade"},
+    ["Subspace Tripmine"] = {"Default","Don't Press","Spring","DIY Tripmine","Trick or Treat","Dev-in-the-Box","Glorious Subspace Tripmine"},
+    ["War Horn"]          = {"Default","Trumpet","Megaphone","Air Horn","Boneclaw Horn","Mammoth Horn","Glorious War Horn"},
+    ["Warpstone"]         = {"Default","Cyber Warpstone","Teleport Disc","Electropunk Warpstone","Warpbone","Warpstar","Unstable Warpstone","Warpeye","Glorious Warpstone"},
+    ["Permafrost"]        = {"Default","Snowman Permafrost","Ice Permafrost","Glorious Permafrost"},
+}
+
+local WeaponList = {}
+for w in pairs(SkinLists) do table.insert(WeaponList, w) end
+table.sort(WeaponList, function(a, b) return a:lower() < b:lower() end)
+
+-- ─── ENGINE A: COSMETIC LIBRARY HOOK ─────────────────────────────────────────
+-- Skins that ARE in CosmeticLibrary but whose RC_NAME key must NOT be set
+-- because the game's internal viewmodel config doesn't recognise them —
+-- setting RC_NAME crashes the weapon off the loadout.
+-- Engine B will handle their visuals on top instead.
+local SKIP_RC_NAME = {
+    -- Revolver
+    ["Desert Eagle"]        = true,
+    ["Keyvolver"]           = true,
+    -- Daggers
+    ["Paper Planes"]        = true,
+    ["Crystal Daggers"]     = true,
+    ["Keynais"]             = true,
+    -- Bow
+    ["Key Bow"]             = true,
+    ["Compound Bow"]        = true,
+    ["Raven Bow"]           = true,
+    ["Dream Bow"]           = true,
+    ["Frostbite Bow"]       = true,
+    ["Beloved Bow"]         = true,
+    -- Crossbow
+    ["Harpoon Crossbow"]    = true,
+    ["Violin Crossbow"]     = true,
+    ["Crossbone"]           = true,
+    ["Arch Crossbow"]       = true,
+    -- Slingshot
+    ["Harp"]                = true,
+    -- Chainsaw
+    ["Handsaws"]            = true,
+    ["Mega Drill"]          = true,
+    ["Buzzsaw"]             = true,
+    ["Festive Buzzsaw"]     = true,
+    -- Satchel
+    ["Advanced Satchel"]    = true,
+    ["Notebook Satchel"]    = true,
+    ["Bag o' Money"]        = true,
+    ["Potion Satchel"]      = true,
+    ["Suspicious Gift"]     = true,
+    ["Glorious Satchel"]    = true,
+}
+
+-- Same set — these skins also need Engine B visual overlay
+local NEEDS_VISUAL_OVERRIDE = {
+    -- Revolver
+    ["Desert Eagle"]        = true,
+    ["Keyvolver"]           = true,
+    -- Daggers
+    ["Paper Planes"]        = true,
+    ["Crystal Daggers"]     = true,
+    ["Keynais"]             = true,
+    -- Bow
+    ["Key Bow"]             = true,
+    ["Compound Bow"]        = true,
+    ["Raven Bow"]           = true,
+    ["Dream Bow"]           = true,
+    ["Frostbite Bow"]       = true,
+    ["Beloved Bow"]         = true,
+    -- Crossbow
+    ["Harpoon Crossbow"]    = true,
+    ["Violin Crossbow"]     = true,
+    ["Crossbone"]           = true,
+    ["Arch Crossbow"]       = true,
+    -- Slingshot
+    ["Harp"]                = true,
+    -- Chainsaw
+    ["Handsaws"]            = true,
+    ["Mega Drill"]          = true,
+    ["Buzzsaw"]             = true,
+    ["Festive Buzzsaw"]     = true,
+    -- Satchel
+    ["Advanced Satchel"]    = true,
+    ["Notebook Satchel"]    = true,
+    ["Bag o' Money"]        = true,
+    ["Potion Satchel"]      = true,
+    ["Suspicious Gift"]     = true,
+    ["Glorious Satchel"]    = true,
+}
+
+local _cosmeticCache = {}
+local function getCosmeticData(name)
+    if _cosmeticCache[name] ~= nil then return _cosmeticCache[name] end
+    if not CosmeticLibrary or not CosmeticLibrary.Cosmetics then
+        _cosmeticCache[name] = false; return nil
+    end
+    local base = CosmeticLibrary.Cosmetics[name]
+    if not base then
+        local nl = name:lower()
+        for k, v in pairs(CosmeticLibrary.Cosmetics) do
+            if type(k) == "string" and k:lower() == nl then base = v; break end
         end
     end
-    AnimOriginals[wType]=nil; ActiveSkins[wType]=nil; TrackCache[wType]=nil
+    if not base then _cosmeticCache[name] = false; return nil end
+    local proxy = setmetatable({Name = name, Type = "Skin"}, {__index = base})
+    _cosmeticCache[name] = proxy
+    return proxy
 end
 
-if VMA then
-    local _oldLoad = VMA.LoadAnimations
-    VMA.LoadAnimations = function(self, ...)
-        local r = _oldLoad(self, ...)
-        task.spawn(function()
-            task.wait(0.25)
-            local wType=""
-            pcall(function() wType=extractWeaponType(self.ClientViewModel.Name) end)
-            if wType=="" then return end
-            VMAInstances[wType]=self; TrackCache[wType]=nil; AnimOriginals[wType]=nil
-            local pending=State and State.pendingApply and State.pendingApply[wType]
-            if pending and State.enabled then
-                local wk,sk=toKey(wType),toKey(pending.Name)
-                ActiveSkins[wType]={wk=wk,sk=sk,slots=getSkinSlots(wk,sk)}
+local function useHook(skinName)
+    -- Always use hook if in CosmeticLibrary (even SKIP_RC_NAME skins go through
+    -- Engine A for weapon creation — we just skip setting RC_NAME for them)
+    local data = getCosmeticData(skinName)
+    return data ~= nil and data ~= false
+end
+
+if ClientViewModel then
+    local _oldNew = ClientViewModel.new
+    ClientViewModel.new = function(replicatedData, clientItem)
+        pcall(function()
+            local isLocal = false
+            pcall(function()
+                isLocal = clientItem.ClientFighter.Player == LocalPlayer
+            end)
+            if not isLocal then return end
+
+            local weaponName = clientItem and clientItem.Name
+            if not weaponName then return end
+            local skinName = EquippedSkins[weaponName]
+            if not skinName or skinName == "Default" then return end
+            if not State.enabled then return end
+            if not useHook(skinName) then return end
+
+            local cosData = getCosmeticData(skinName)
+            if not cosData then return end
+            if not RC_DATA or not RC_SKIN then return end
+
+            replicatedData[RC_DATA] = replicatedData[RC_DATA] or {}
+            replicatedData[RC_DATA][RC_SKIN] = {
+                Name                = skinName,
+                Type                = "Skin",
+                ItemName            = cosData.ItemName,
+                Rarity              = cosData.Rarity,
+                Image               = cosData.Image,
+                ImageHighResolution = cosData.ImageHighResolution,
+                ImageScale          = cosData.ImageScale,
+                Description         = cosData.Description,
+                IsMythical          = (cosData.Rarity == "Mythical") or nil,
+            }
+            -- Only set RC_NAME for skins whose viewmodel config is registered
+            -- in the game's internal lookup. Setting it for unregistered skins
+            -- causes the weapon to silently vanish from the loadout.
+            if RC_NAME and not SKIP_RC_NAME[skinName] then
+                replicatedData[RC_DATA][RC_NAME] = skinName
             end
         end)
-        return r
-    end
 
-    local _oldPlay = VMA.PlayAnimation
-    VMA.PlayAnimation = function(self, animKey, ...)
-        local wType=""
-        pcall(function() wType=extractWeaponType(self.ClientViewModel.Name) end)
-        if wType~="" and self._animation_tracks then
-            local info=ActiveSkins[wType]
-            if info then
-                local slotNorm=toKey(animKey)
-                local skinAnimId=info.slots[slotNorm]
-                if skinAnimId then
-                    local skinTrack=getOrLoadTrack(wType,slotNorm,skinAnimId,self)
-                    if skinTrack then
-                        AnimOriginals[wType]=AnimOriginals[wType] or {}
-                        if not AnimOriginals[wType][animKey] then
-                            AnimOriginals[wType][animKey]={
-                                track=self._animation_tracks[animKey],
-                                animKey=self._viewmodel_animations and self._viewmodel_animations[animKey],
-                            }
-                        end
-                        self._animation_tracks[animKey]=skinTrack
-                        if self._viewmodel_animations then
-                            self._viewmodel_animations[animKey]=info.wk.."_"..info.sk.."_"..slotNorm
-                        end
-                    end
-                end
-            end
-        end
-        return _oldPlay(self, animKey, ...)
+        local vm = _oldNew(replicatedData, clientItem)
+        task.defer(function()
+            pcall(function() if vm and vm._UpdateWrap then vm:_UpdateWrap() end end)
+        end)
+        return vm
     end
 end
 
--- WEAPON MAP
-local WEAPON_MAP = {
-    ["AK-47"]="Assault Rifle",["AUG"]="Assault Rifle",["Tommy Gun"]="Assault Rifle",
-    ["AKEY-47"]="Assault Rifle",["Boneclaw Rifle"]="Assault Rifle",
-    ["Gingerbread AUG"]="Assault Rifle",["Phoenix Rifle"]="Assault Rifle",
-    ["10B Visits"]="Assault Rifle",["Glorious Assault Rifle"]="Assault Rifle",
-    ["Compound Bow"]="Bow",["Raven Bow"]="Bow",["Dream Bow"]="Bow",
-    ["Balloon Bow"]="Bow",["Beloved Bow"]="Bow",["Key Bow"]="Bow",
-    ["Bat Bow"]="Bow",["Frostbite Bow"]="Bow",["Glorious Bow"]="Bow",
-    ["Electro Rifle"]="Burst Rifle",["Aqua Burst"]="Burst Rifle",["FAMAS"]="Burst Rifle",
-    ["Pixel Burst"]="Burst Rifle",["Keyst Rifle"]="Burst Rifle",["Spectral Burst"]="Burst Rifle",
-    ["Pine Burst"]="Burst Rifle",["Glorious Burst Rifle"]="Burst Rifle",
-    ["Pixel Crossbow"]="Crossbow",["Harpoon Crossbow"]="Crossbow",["Violin Crossbow"]="Crossbow",
-    ["Crossbone"]="Crossbow",["Frostbite Crossbow"]="Crossbow",["Arch Crossbow"]="Crossbow",
-    ["Glorious Crossbow"]="Crossbow",
-    ["Hyper Gunblade"]="Gunblade",["Crude Gunblade"]="Gunblade",["Gunsaw"]="Gunblade",
-    ["Boneblade"]="Gunblade",["Elf's Gunblade"]="Gunblade",["Glorious Gunblade"]="Gunblade",
-    ["Nuke Launcher"]="RPG",["Spaceship Launcher"]="RPG",["Squid Launcher"]="RPG",
-    ["Rocket Launcher"]="RPG",["Pencil Launcher"]="RPG",["RPKEY"]="RPG",
-    ["Pumpkin Launcher"]="RPG",["Firework Launcher"]="RPG",["Glorious RPG"]="RPG",
-    ["Balloon Shotgun"]="Shotgun",["Hyper Shotgun"]="Shotgun",["Cactus Shotgun"]="Shotgun",
-    ["Shotkey"]="Shotgun",["Broomstick"]="Shotgun",["Wrapped Shotgun"]="Shotgun",
-    ["Glorious Shotgun"]="Shotgun",
-    ["Pixel Sniper"]="Sniper",["Hyper Sniper"]="Sniper",["Event Horizon"]="Sniper",
-    ["Keyper"]="Sniper",["Eyething Sniper"]="Sniper",["Gingerbread Sniper"]="Sniper",
-    ["Glorious Sniper"]="Sniper",
-    ["Hacker Rifle"]="Energy Rifle",["Hydro Rifle"]="Energy Rifle",["Void Rifle"]="Energy Rifle",
-    ["Apex Rifle"]="Energy Rifle",["Soul Rifle"]="Energy Rifle",
-    ["New Year Energy Rifle"]="Energy Rifle",["Glorious Energy Rifle"]="Energy Rifle",
-    ["Pixel Flamethrower"]="Flamethrower",["Lamethrower"]="Flamethrower",
-    ["Glitterthrower"]="Flamethrower",["Jack O'Thrower"]="Flamethrower",
-    ["Snowblower"]="Flamethrower",["Keythrower"]="Flamethrower",
-    ["Rainbowthrower"]="Flamethrower",["Spray Bottle"]="Flamethrower",
-    ["Glorious Flamethrower"]="Flamethrower",
-    ["Swashbuckler"]="Grenade Launcher",["Uranium Launcher"]="Grenade Launcher",
-    ["Gearnade Launcher"]="Grenade Launcher",["Balloon Launcher"]="Grenade Launcher",
-    ["Skull Launcher"]="Grenade Launcher",["Snowball Launcher"]="Grenade Launcher",
-    ["Glorious Grenade Launcher"]="Grenade Launcher",
-    ["Lasergun 3000"]="Minigun",["Pixel Minigun"]="Minigun",["Fighter Jet"]="Minigun",
-    ["Pumpkin Minigun"]="Minigun",["Wrapped Minigun"]="Minigun",["Glorious Minigun"]="Minigun",
-    ["Slime Gun"]="Paintball Gun",["Boba Gun"]="Paintball Gun",["Ketchup Gun"]="Paintball Gun",
-    ["Paintballoon Gun"]="Paintball Gun",["Brain Gun"]="Paintball Gun",
-    ["Snowball Gun"]="Paintball Gun",["Money Gun"]="Paintball Gun",
-    ["Glorious Paintball Gun"]="Paintball Gun",
-    ["Electropunk Distortion"]="Distortion",["Experiment D15"]="Distortion",
-    ["Sleighstortion"]="Distortion",["Plasma Distortion"]="Distortion",
-    ["Magma Distortion"]="Distortion",["Cyber Distortion"]="Distortion",
-    ["Glorious Distortion"]="Distortion",
-    ["Snowman Permafrost"]="Permafrost",["Ice Permafrost"]="Permafrost",
-    ["Glorious Permafrost"]="Permafrost",
-    ["Blaster"]="Handgun",["Hand Gun"]="Handgun",["Gumball Handgun"]="Handgun",
-    ["Pixel Handgun"]="Handgun",["Pumpkin Handgun"]="Handgun",
-    ["Gingerbread Handgun"]="Handgun",["Towerstone Handgun"]="Handgun",
-    ["Warp Handgun"]="Handgun",["Glorious Handgun"]="Handgun",["Stealth Handgun"]="Handgun",
-    ["Aces"]="Daggers",["Paper Planes"]="Daggers",["Shurikens"]="Daggers",
-    ["Broken Hearts"]="Daggers",["Bat Daggers"]="Daggers",["Crystal Daggers"]="Daggers",
-    ["Cookies"]="Daggers",["Keynais"]="Daggers",["Glorious Daggers"]="Daggers",
-    ["Firework Gun"]="Flare Gun",["Dynamite Gun"]="Flare Gun",["Banana Flare"]="Flare Gun",
-    ["Vexed Flare Gun"]="Flare Gun",["Wrapped Flare Gun"]="Flare Gun",
-    ["Glorious Flare Gun"]="Flare Gun",
-    ["Desert Eagle"]="Revolver",["Sheriff"]="Revolver",["Peppergun"]="Revolver",
-    ["Keyvolver"]="Revolver",["Boneclaw Revolver"]="Revolver",
-    ["Peppermint Sheriff"]="Revolver",["Glorious Revolver"]="Revolver",
-    ["Not So Shorty"]="Shorty",["Lovely Shorty"]="Shorty",["Balloon Shorty"]="Shorty",
-    ["Too Shorty"]="Shorty",["Demon Shorty"]="Shorty",["Wrapped Shorty"]="Shorty",
-    ["Glorious Shorty"]="Shorty",
-    ["Lovely Spray"]="Spray",["Nail Gun"]="Spray",["Pine Spray"]="Spray",
-    ["Key Spray"]="Spray",["Boneclaw Spray"]="Spray",["Glorious Spray"]="Spray",
-    ["Water Uzi"]="Uzi",["Electro Uzi"]="Uzi",["Keyzi"]="Uzi",
-    ["Demon Uzi"]="Uzi",["Pine Uzi"]="Uzi",["Glorious Uzi"]="Uzi",
-    ["Hacker Pistols"]="Energy Pistols",["Void Pistols"]="Energy Pistols",
-    ["Hydro Pistols"]="Energy Pistols",["Apex Pistols"]="Energy Pistols",
-    ["Hyperlaser Guns"]="Energy Pistols",["New Year Energy Pistols"]="Energy Pistols",
-    ["Soul Pistols"]="Energy Pistols",["Glorious Energy Pistols"]="Energy Pistols",
-    ["Singularity"]="Exogun",["Ray Gun"]="Exogun",["Repulsor"]="Exogun",
-    ["Wondergun"]="Exogun",["Exogourd"]="Exogun",
-    ["Midnight Festive Exogun"]="Exogun",["Glorious Exogun"]="Exogun",
-    ["Stick"]="Slingshot",["Goalpost"]="Slingshot",["Harp"]="Slingshot",
-    ["Boneshot"]="Slingshot",["Reindeer Slingshot"]="Slingshot",
-    ["Lucky Horseshoe"]="Slingshot",["Glorious Slingshot"]="Slingshot",
-    ["Electropunk Warper"]="Warper",["Experiment W4"]="Warper",["Frost Warper"]="Warper",
-    ["Glitter Warper"]="Warper",["Arcane Warper"]="Warper",["Hotel Bell"]="Warper",
-    ["Glorious Warper"]="Warper",
-    ["Boxing Gloves"]="Fists",["Brass Knuckles"]="Fists",["Fists of Hurt"]="Fists",
-    ["Pumpkin Claws"]="Fists",["Festive Fists"]="Fists",["Fist"]="Fists",
-    ["Glorious Fists"]="Fists",
-    ["The Shred"]="Battle Axe",["Ban Axe"]="Battle Axe",["Cerulean Axe"]="Battle Axe",
-    ["Balloon Axe"]="Battle Axe",["Keyttle Axe"]="Battle Axe",["Nordic Axe"]="Battle Axe",
-    ["Caladbolg"]="Battle Axe",["Glorious Battle Axe"]="Battle Axe",
-    ["Blobsaw"]="Chainsaw",["Handsaws"]="Chainsaw",["Mega Drill"]="Chainsaw",
-    ["Buzzsaw"]="Chainsaw",["Festive Buzzsaw"]="Chainsaw",["Glorious Chainsaw"]="Chainsaw",
-    ["Saber"]="Katana",["Lightning Bolt"]="Katana",["Stellar Katana"]="Katana",
-    ["Pixel Katana"]="Katana",["Linked Sword"]="Katana",["Keytana"]="Katana",
-    ["Evil Trident"]="Katana",["New Year Katana"]="Katana",["Arch Katana"]="Katana",
-    ["Crystal Katana"]="Katana",["Glorious Katana"]="Katana",
-    ["Chancla"]="Knife",["Karambit"]="Knife",["Balisong"]="Knife",["Machete"]="Knife",
-    ["Candy Cane"]="Knife",["Keyrambit"]="Knife",["Keylisong"]="Knife",
-    ["Glorious Knife"]="Knife",
-    ["Door"]="Riot Shield",["Energy Shield"]="Riot Shield",["Masterpiece"]="Riot Shield",
-    ["Sled"]="Riot Shield",["Glorious Riot Shield"]="Riot Shield",
-    ["Scythe of Death"]="Scythe",["Anchor"]="Scythe",["Sakura Scythe"]="Scythe",
-    ["Keythe"]="Scythe",["Bat Scythe"]="Scythe",["Cryo Scythe"]="Scythe",
-    ["Crystal Scythe"]="Scythe",["Glorious Scythe"]="Scythe",["Bug Net"]="Scythe",
-    ["Plastic Shovel"]="Trowel",["Garden Shovel"]="Trowel",["Paintbrush"]="Trowel",
-    ["Pumpkin Carver"]="Trowel",["Snow Shovel"]="Trowel",["Glorious Trowel"]="Trowel",
-    ["Ban Hammer"]="Maul",["Sleigh Maul"]="Maul",["Ice Maul"]="Maul",["Glorious Maul"]="Maul",
-    ["Whoopee Cushion"]="Grenade",["Water Balloon"]="Grenade",["Dynamite"]="Grenade",
-    ["Keynade"]="Grenade",["Cuddle Bomb"]="Grenade",["Soul Grenade"]="Grenade",
-    ["Jingle Grenade"]="Grenade",["Frozen Grenade"]="Grenade",["Glorious Grenade"]="Grenade",
-    ["Disco Ball"]="Flashbang",["Camera"]="Flashbang",["Lightbulb"]="Flashbang",
-    ["Pixel Flashbang"]="Flashbang",["Skullbang"]="Flashbang",["Shining Star"]="Flashbang",
-    ["Glorious Flashbang"]="Flashbang",
-    ["Temporal Ray"]="Freeze Ray",["Bubble Ray"]="Freeze Ray",["Gum Ray"]="Freeze Ray",
-    ["Spider Ray"]="Freeze Ray",["Wrapped Freeze Ray"]="Freeze Ray",
-    ["Glorious Freeze Ray"]="Freeze Ray",
-    ["Trampoline"]="Jump Pad",["Bounce House"]="Jump Pad",
-    ["Shady Chicken Sandwich"]="Jump Pad",["Glorious Jump Pad"]="Jump Pad",
-    ["Coffee"]="Molotov",["Torch"]="Molotov",["Lava Lamp"]="Molotov",
-    ["Vexed Candle"]="Molotov",["Hot Coals"]="Molotov",
-    ["Arch Molotov"]="Molotov",["Glorious Molotov"]="Molotov",
-    ["Advanced Satchel"]="Satchel",["Notebook Satchel"]="Satchel",
-    ["Bag o' Money"]="Satchel",["Suspicious Gift"]="Satchel",
-    ["Glorious Satchel"]="Satchel",["Potion Satchel"]="Satchel",
-    ["Emoji Cloud"]="Smoke Grenade",["Balance"]="Smoke Grenade",
-    ["Hourglass"]="Smoke Grenade",["Eyeball"]="Smoke Grenade",
-    ["Snowglobe"]="Smoke Grenade",["Glorious Smoke Grenade"]="Smoke Grenade",
-    ["Trumpet"]="War Horn",["Megaphone"]="War Horn",["Air Horn"]="War Horn",
-    ["Mammoth Horn"]="War Horn",["Boneclaw Horn"]="War Horn",["Glorious War Horn"]="War Horn",
-    ["Sandwich"]="Medkit",["Laptop"]="Medkit",["Medkitty"]="Medkit",
-    ["Box of Chocolates"]="Medkit",["Briefcase"]="Medkit",["Bucket of Candy"]="Medkit",
-    ["Milk & Cookies"]="Medkit",["Glorious Medkit"]="Medkit",
-    ["Don't Press"]="Subspace Tripmine",["Spring"]="Subspace Tripmine",
-    ["DIY Tripmine"]="Subspace Tripmine",["Trick or Treat"]="Subspace Tripmine",
-    ["Dev-in-the-Box"]="Subspace Tripmine",["Glorious Subspace Tripmine"]="Subspace Tripmine",
-    ["Cyber Warpstone"]="Warpstone",["Teleport Disc"]="Warpstone",
-    ["Electropunk Warpstone"]="Warpstone",["Unstable Warpstone"]="Warpstone",
-    ["Warpeye"]="Warpstone",["Glorious Warpstone"]="Warpstone",
-    ["Warpbone"]="Warpstone",["Warpstar"]="Warpstone",
+-- ─── ENGINE B: VISUAL (WELDCONSTRAINT) ───────────────────────────────────────
+local TAG        = "RSC3Clone"
+local ARM_GROUPS = {["_fake"] = true, ["_right_arm"] = true, ["_left_arm"] = true}
+
+-- Remap source group names → live group names where they differ
+local GROUP_REMAP = {
+    -- Keyvolver: numbered bullet groups → single live groups
+    ["Bullets1"]       = "Bullets",
+    ["Bullets2"]       = "Bullets",
+    ["Bullets3"]       = "Bullets",
+    ["Bullets4"]       = "Bullets",
+    ["Bullets5"]       = "Bullets",
+    ["Bullets6"]       = "Bullets",
+    ["ReloadBullets1"] = "ReloadBullets",
+    ["ReloadBullets2"] = "ReloadBullets",
+    ["ReloadBullets3"] = "ReloadBullets",
+    ["ReloadBullets4"] = "ReloadBullets",
+    ["ReloadBullets5"] = "ReloadBullets",
+    ["ReloadBullets6"] = "ReloadBullets",
+    -- Desert Eagle: Slide → Hammer, Magazine → Chamber
+    ["Slide"]          = "Hammer",
+    ["Magazine"]       = "Chamber",
+    -- Key Bow extra arms → Body
+    ["TopArm"]         = "Body",
+    ["BottomArm"]      = "Body",
 }
 
--- ─── THEME ───────────────────────────────────────────────────────────────────
-local T = {
-    BG       = Color3.fromRGB(6,6,8),
-    SIDEBAR  = Color3.fromRGB(10,10,13),
-    CARD     = Color3.fromRGB(16,16,20),
-    CARDH    = Color3.fromRGB(24,24,30),
-    ACCENT   = Color3.fromRGB(110,130,255),
-    ACCENTH  = Color3.fromRGB(130,150,255),
-    PRI      = Color3.fromRGB(235,235,240),
-    SEC      = Color3.fromRGB(110,110,125),
-    MUT      = Color3.fromRGB(60,60,72),
-    GREEN    = Color3.fromRGB(45,200,100),
-    RED      = Color3.fromRGB(210,55,55),
-    YELLOW   = Color3.fromRGB(240,185,50),
-    BORDER   = Color3.fromRGB(26,26,33),
-    SEL      = Color3.fromRGB(22,26,58),
-    SELBRD   = Color3.fromRGB(80,100,220),
-    PURPLE   = Color3.fromRGB(155,100,255),
-    LINE     = Color3.fromRGB(20,20,26),
-}
-local TWEEN  = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TWEENS = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
--- ─── STATE ───────────────────────────────────────────────────────────────────
-local savedSkins, savedKeybind = loadData()
-local State = {
-    enabled      = true,
-    page         = "Home",
-    selectedWeapon = nil,
-    pendingApply = {},
-    applyDebounce = {},
-    keybind      = savedKeybind or Enum.KeyCode.RightAlt,
-    rebinding    = false,
-}
-
--- ─── CATALOGUE ───────────────────────────────────────────────────────────────
-local WeaponSkins, WeaponList = {}, {}
-local function buildWeaponSkins()
-    if not ViewModels then return end
-    for _,cf in ipairs(ViewModels:GetChildren()) do
-        if cf:IsA("Folder") then
-            for _,sm in ipairs(cf:GetChildren()) do
-                if sm:IsA("Model") then
-                    local w=WEAPON_MAP[sm.Name]
-                    if w then WeaponSkins[w]=WeaponSkins[w] or {};table.insert(WeaponSkins[w],sm) end
+local _anchorCache = {}
+local SkinModelMap = {}
+if ViewModels then
+    for _, folder in ipairs(ViewModels:GetChildren()) do
+        if folder:IsA("Folder") then
+            for _, model in ipairs(folder:GetChildren()) do
+                if model:IsA("Model") then
+                    SkinModelMap[model.Name] = model
                 end
             end
         end
     end
-    for _,s in pairs(WeaponSkins) do table.sort(s,function(a,b) return a.Name:lower()<b.Name:lower() end) end
-    for w in pairs(WeaponSkins) do table.insert(WeaponList,w) end
-    table.sort(WeaponList,function(a,b) return a:lower()<b:lower() end)
 end
-buildWeaponSkins()
-
--- Restore saved skins
-for w, skinName in pairs(savedSkins) do
-    local skins = WeaponSkins[w]
-    if skins then
-        for _,sm in ipairs(skins) do
-            if sm.Name == skinName then State.pendingApply[w]=sm; break end
-        end
-    end
-end
-
--- ─── VISUAL ENGINE ───────────────────────────────────────────────────────────
-local TAG        = "RSkinClone"
-local ARM_GROUPS = {["_fake"]=true,["_right_arm"]=true,["_left_arm"]=true}
 
 local function findAnchor(g)
-    for _,p in ipairs(g:GetChildren()) do
-        if p:IsA("BasePart") and p.Name==g.Name.."Primary" then return p end
-    end
-    for _,p in ipairs(g:GetChildren()) do
-        if p:IsA("BasePart") and not p:IsA("MeshPart") then return p end
-    end
-    for _,p in ipairs(g:GetChildren()) do
-        if p:IsA("Model") then local a=findAnchor(p);if a then return a end end
-    end
-end
-local function removeClones(m)
-    for _,d in ipairs(m:GetDescendants()) do if d:GetAttribute(TAG) then d:Destroy() end end
-end
-local function restoreOriginals(m)
-    for _,d in ipairs(m:GetDescendants()) do
-        if d:IsA("BasePart") and not d:GetAttribute(TAG) then
-            local o=d:GetAttribute("OrigTrans")
-            if o~=nil then d.Transparency=o;d.CastShadow=true;d:SetAttribute("OrigTrans",nil) end
+    local key = g:GetFullName()
+    if _anchorCache[key] then return _anchorCache[key] end
+    local result
+    for _, p in ipairs(g:GetChildren()) do
+        if p:IsA("BasePart") and p.Name == g.Name .. "Primary" then
+            result = p; break
         end
     end
-end
-local function applyVisualSkin(src,live)
-    removeClones(live); restoreOriginals(live)
-    local iv=live:FindFirstChild("ItemVisual"); if not iv then return false end
-    local liveBodyGroup=iv:FindFirstChild("Body")
-    local liveBodyAnchor=liveBodyGroup and findAnchor(liveBodyGroup)
-    if not liveBodyAnchor then return false end
-    local any=false
-    for _,sg in ipairs(src:GetChildren()) do
-        if not sg:IsA("Model") or sg.Name=="_charm_attachment_model" or ARM_GROUPS[sg.Name] then continue end
-        local sa=sg:FindFirstChild("Primary"); if not sa then continue end
-        local lg=iv:FindFirstChild(sg.Name)
-        local matched=lg and lg:IsA("Model")
-        local la,parentGroup
-        if matched then
-            la=findAnchor(lg); if not la then continue end
-            parentGroup=lg
-            for _,p in ipairs(lg:GetChildren()) do
-                if p:IsA("MeshPart") and not p:GetAttribute(TAG) then
-                    if p:GetAttribute("OrigTrans")==nil then p:SetAttribute("OrigTrans",p.Transparency) end
-                    p.Transparency=1;p.CastShadow=false
-                end
+    if not result then
+        for _, p in ipairs(g:GetChildren()) do
+            if p:IsA("BasePart") and not p:IsA("MeshPart") then
+                result = p; break
             end
-        else
-            la=liveBodyAnchor;parentGroup=liveBodyGroup
         end
-        for _,sp in ipairs(sg:GetDescendants()) do
-            if not sp:IsA("BasePart") or sp.Name=="Primary" then continue end
-            local skip=false; local par=sp.Parent
-            while par and par~=sg do
-                if par.Name=="_charm_attachment_model" then skip=true;break end; par=par.Parent
+    end
+    _anchorCache[key] = result
+    return result
+end
+
+local function removeClones(m)
+    for _, d in ipairs(m:GetDescendants()) do
+        if d:GetAttribute(TAG) then
+            if d:IsA("BasePart") then pcall(function() d.Anchored = true end) end
+            d:Destroy()
+        end
+    end
+end
+
+local function restoreOriginals(m)
+    for _, d in ipairs(m:GetDescendants()) do
+        if d:IsA("BasePart") and not d:GetAttribute(TAG) then
+            local o = d:GetAttribute("OrigTrans")
+            if o ~= nil then
+                d.Transparency = o
+                d.CastShadow   = true
+                d:SetAttribute("OrigTrans", nil)
+            end
+        end
+    end
+end
+
+local function applyVisualSkin(src, live)
+    removeClones(live)
+    restoreOriginals(live)
+    local iv = live:FindFirstChild("ItemVisual")
+    if not iv then return false end
+    local any = false
+    for _, sg in ipairs(src:GetChildren()) do
+        if not sg:IsA("Model") then continue end
+        if sg.Name == "_charm_attachment_model" then continue end
+        if ARM_GROUPS[sg.Name] then continue end
+        local sa = sg:FindFirstChild("Primary")
+        if not sa then continue end
+        -- Use GROUP_REMAP to find the correct live group
+        local lgName = GROUP_REMAP[sg.Name] or sg.Name
+        local lg = iv:FindFirstChild(lgName)
+        if not lg or not lg:IsA("Model") then continue end
+        local la = findAnchor(lg)
+        if not la then continue end
+        for _, p in ipairs(lg:GetChildren()) do
+            if p:IsA("MeshPart") and not p:GetAttribute(TAG) then
+                if p:GetAttribute("OrigTrans") == nil then
+                    p:SetAttribute("OrigTrans", p.Transparency)
+                end
+                p.Transparency = 1
+                p.CastShadow   = false
+            end
+        end
+        for _, sp in ipairs(sg:GetDescendants()) do
+            if not sp:IsA("BasePart") or sp.Name == "Primary" then continue end
+            local skip = false
+            local par = sp.Parent
+            while par and par ~= sg do
+                if par.Name == "_charm_attachment_model" then skip = true; break end
+                par = par.Parent
             end
             if skip then continue end
-            local c=sp:Clone()
-            c.CFrame=la.CFrame*sa.CFrame:ToObjectSpace(sp.CFrame)
-            c.Anchored=false;c.CanCollide=false;c.CastShadow=false
-            c:SetAttribute(TAG,true);c.Parent=parentGroup
-            local w=Instance.new("WeldConstraint");w.Part0=la;w.Part1=c;w.Parent=c
+            local c = sp:Clone()
+            c.CFrame     = la.CFrame * sa.CFrame:ToObjectSpace(sp.CFrame)
+            c.Anchored   = false
+            c.CanCollide = false
+            c.CastShadow = false
+            c:SetAttribute(TAG, true)
+            c.Parent = lg
+            local w  = Instance.new("WeldConstraint")
+            w.Part0  = la
+            w.Part1  = c
+            w.Parent = c
         end
-        any=true
+        any = true
     end
     return any
 end
-local function fullApplySkin(src,wType,live)
-    local v=applyVisualSkin(src,live)
-    local wk,sk=toKey(wType),toKey(src.Name)
-    local slots=getSkinSlots(wk,sk)
-    if next(slots) then ActiveSkins[wType]={wk=wk,sk=sk,slots=slots} end
-    return v,next(slots) and 1 or 0
-end
-local function findLive(wn)
-    if not FirstPerson then return end
-    local pat=PlayerName.." - "..wn
-    for _,c in ipairs(FirstPerson:GetChildren()) do
-        if c:IsA("Model") and c.Name:find(pat,1,true) then return c end
+
+-- ─── ENGINE B SUPPORT ─────────────────────────────────────────────────────────
+local FirstPerson = nil
+
+local function findLiveModel(weaponType)
+    if not FirstPerson then return nil end
+    local pat = PlayerName .. " - " .. weaponType
+    for _, c in ipairs(FirstPerson:GetChildren()) do
+        if c:IsA("Model") and c.Name:find(pat, 1, true) then return c end
     end
 end
+
 local function hasClones(m)
-    for _,d in ipairs(m:GetDescendants()) do if d:GetAttribute(TAG) then return true end end
-end
-local function revertOne(w)
-    local l=findLive(w);if l then removeClones(l);restoreOriginals(l) end; clearSkin(w)
+    for _, d in ipairs(m:GetDescendants()) do
+        if d:GetAttribute(TAG) then return true end
+    end
+    return false
 end
 
-local SkinEngine={}
-function SkinEngine.apply(sm,wt)
-    local l=findLive(wt);if l then return fullApplySkin(sm,wt,l) end;return false,0
+local function applyVisualNow(skinName, weaponType)
+    local src = SkinModelMap[skinName]
+    if not src then return false end
+    local live = findLiveModel(weaponType)
+    if not live then return false end
+    return applyVisualSkin(src, live)
 end
-function SkinEngine.refreshAll()
-    if not State.enabled then return end
-    for w,s in pairs(State.pendingApply) do
-        local l=findLive(w)
-        if l and not hasClones(l) then fullApplySkin(s,w,l) end
+
+local function revertVisual(weaponType)
+    local live = findLiveModel(weaponType)
+    if live then
+        removeClones(live)
+        restoreOriginals(live)
+    end
+    for key in pairs(_anchorCache) do
+        if key:find(weaponType, 1, true) then _anchorCache[key] = nil end
     end
 end
-function SkinEngine.revertAll() for w in pairs(State.pendingApply) do revertOne(w) end end
-function SkinEngine.revertOne(w) revertOne(w) end
 
--- ─── GUI HELPERS ─────────────────────────────────────────────────────────────
-local function inst(cls,props,par)
-    local i=Instance.new(cls);for k,v in pairs(props) do i[k]=v end;if par then i.Parent=par end;return i
-end
-local function corner(p,r) inst("UICorner",{CornerRadius=UDim.new(0,r or 6)},p) end
-local function stroke(p,c,t) inst("UIStroke",{Color=c or T.BORDER,Thickness=t or 1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},p) end
-local function pad(p,a,b,c,d) inst("UIPadding",{PaddingTop=UDim.new(0,a or 8),PaddingRight=UDim.new(0,b or 8),PaddingBottom=UDim.new(0,c or 8),PaddingLeft=UDim.new(0,d or 8)},p) end
-local function tw(o,pr,ti) TweenService:Create(o,ti or TWEEN,pr):Play() end
-local function onHover(b,n,h) b.MouseEnter:Connect(function() tw(b,{BackgroundColor3=h}) end);b.MouseLeave:Connect(function() tw(b,{BackgroundColor3=n}) end) end
-local function divider(par,yOff)
-    inst("Frame",{Size=UDim2.new(1,-28,0,1),Position=UDim2.new(0,14,0,yOff),BackgroundColor3=T.LINE,BorderSizePixel=0},par)
-end
+local _visualHooks = {}
 
--- ─── CLEANUP ─────────────────────────────────────────────────────────────────
-for _,n in ipairs({"RivalsSkinChangerV3","RivalsSkinChangerV4","RivalsSkinChangerV5",
-    "RivalsSkinChangerV6","RivalsSkinChangerV7","RivalsSkinChangerV8","RivalsSkinChangerV9"}) do
-    local g=PlayerGui:FindFirstChild(n);if g then g:Destroy() end
-end
+local function hookVisualForWeapon(weaponType, skinName)
+    if _visualHooks[weaponType] then
+        _visualHooks[weaponType]:Disconnect()
+        _visualHooks[weaponType] = nil
+    end
+    if not skinName or skinName == "Default" then return end
 
--- ─── ROOT GUI ────────────────────────────────────────────────────────────────
-local ScreenGui=inst("ScreenGui",{Name="RivalsSkinChangerV9",ResetOnSpawn=false,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=true},PlayerGui)
-local Root=inst("Frame",{Size=UDim2.new(0,740,0,480),Position=UDim2.new(0.5,-370,0.5,-240),
-    BackgroundColor3=T.BG,BorderSizePixel=0,ClipsDescendants=true},ScreenGui)
-corner(Root,10)
--- Overlay holds the border so it renders ABOVE all children
-local BorderOverlay=inst("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,
-    BorderSizePixel=0,ZIndex=100},Root)
-corner(BorderOverlay,10);stroke(BorderOverlay,T.BORDER,1)
+    local function tryApply(child)
+        if not child:IsA("Model") then return end
+        local pat = PlayerName .. " - " .. weaponType
+        if not child.Name:find(pat, 1, true) then return end
+        task.spawn(function()
+            task.wait(0.5)
+            if child.Parent and EquippedSkins[weaponType] == skinName and State.enabled then
+                local src = SkinModelMap[skinName]
+                if src then applyVisualSkin(src, child) end
+            end
+        end)
+    end
 
--- ─── TITLE BAR ───────────────────────────────────────────────────────────────
-local TitleBar=inst("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=T.SIDEBAR,BorderSizePixel=0},Root)
-corner(TitleBar,10)
-inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.LINE,BorderSizePixel=0},TitleBar)
-
--- left: dot + title
-local accentDot=inst("Frame",{Size=UDim2.new(0,6,0,6),Position=UDim2.new(0,14,0.5,-3),
-    BackgroundColor3=T.ACCENT,BorderSizePixel=0},TitleBar)
-corner(accentDot,3)
-inst("TextLabel",{Size=UDim2.new(0,220,1,0),Position=UDim2.new(0,26,0,0),BackgroundTransparency=1,
-    Text="Rivals  —  Skin Changer",Font=Enum.Font.GothamBold,TextSize=12,
-    TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},TitleBar)
-
--- right: status + close
-local StatusBadge=inst("TextLabel",{Size=UDim2.new(0,130,0,20),Position=UDim2.new(1,-170,0.5,-10),
-    BackgroundColor3=T.CARD,Text="● Lobby",Font=Enum.Font.GothamSemibold,
-    TextSize=9,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Center,BorderSizePixel=0},TitleBar)
-corner(StatusBadge,10);stroke(StatusBadge,T.BORDER,1)
-
-local CloseBtn=inst("TextButton",{Size=UDim2.new(0,26,0,26),Position=UDim2.new(1,-36,0.5,-13),
-    BackgroundColor3=T.CARD,Text="X",Font=Enum.Font.GothamBold,
-    TextSize=11,TextColor3=Color3.fromRGB(200,200,210),BorderSizePixel=0},TitleBar)
-corner(CloseBtn,6);stroke(CloseBtn,T.BORDER,1)
-CloseBtn.MouseButton1Click:Connect(function() ScreenGui.Enabled=false end)
-onHover(CloseBtn,T.CARD,T.RED)
-
--- drag
-do
-    local drag,ds,sp=false,nil,nil
-    TitleBar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=true;ds=i.Position;sp=Root.Position end end)
-    UserInputService.InputChanged:Connect(function(i) if drag and i.UserInputType==Enum.UserInputType.MouseMovement then local d=i.Position-ds;Root.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y) end end)
-    UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end end)
+    if FirstPerson then
+        for _, c in ipairs(FirstPerson:GetChildren()) do tryApply(c) end
+        _visualHooks[weaponType] = FirstPerson.ChildAdded:Connect(tryApply)
+    end
 end
 
--- ─── SIDEBAR ─────────────────────────────────────────────────────────────────
-local SBAR_W = 158
-local Sidebar=inst("Frame",{Size=UDim2.new(0,SBAR_W,1,-38),Position=UDim2.new(0,0,0,38),
-    BackgroundColor3=T.SIDEBAR,BorderSizePixel=0},Root)
-    corner(TitleBar,10)
-inst("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=T.LINE,BorderSizePixel=0},Sidebar)
-
--- version tag at bottom
-inst("TextLabel",{Size=UDim2.new(1,0,0,18),Position=UDim2.new(0,0,1,-22),BackgroundTransparency=1,
-    Text="V1 Beta",Font=Enum.Font.Gotham,TextSize=9,
-    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Center},Sidebar)
-
-local SidebarList=inst("Frame",{Size=UDim2.new(1,0,1,-28),BackgroundTransparency=1},Sidebar)
-inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)},SidebarList)
-pad(SidebarList,10,8,6,8)
-
-local Content=inst("Frame",{Size=UDim2.new(1,-SBAR_W,1,-38),Position=UDim2.new(0,SBAR_W,0,38),
-    BackgroundTransparency=1,ClipsDescendants=true},Root)
-
--- ─── PAGES / NAV ─────────────────────────────────────────────────────────────
-local Pages,NavBtns={},{}
-local function newPage(n)
-    local p=inst("Frame",{Name=n,Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,ClipsDescendants=true},Content)
-    Pages[n]=p;return p
-end
-local NavMgr={}
-function NavMgr.go(n)
-    State.page=n
-    for k,pg in pairs(Pages) do pg.Visible=(k==n) end
-    for k,btn in pairs(NavBtns) do
-        if k==n then
-            tw(btn,{BackgroundColor3=T.SEL});btn.TextColor3=T.PRI
-            -- left accent bar
-            if btn:FindFirstChild("_accent") then btn._accent.Visible=true end
-        else
-            tw(btn,{BackgroundColor3=T.SIDEBAR});btn.TextColor3=T.SEC
-            if btn:FindFirstChild("_accent") then btn._accent.Visible=false end
+local function refreshAllVisual()
+    for weaponType, skinName in pairs(EquippedSkins) do
+        if skinName and skinName ~= "Default" then
+            -- Refresh Engine B skins (non-hook) and visual override skins
+            if not useHook(skinName) or NEEDS_VISUAL_OVERRIDE[skinName] then
+                local live = findLiveModel(weaponType)
+                if live and not hasClones(live) then
+                    local src = SkinModelMap[skinName]
+                    if src then applyVisualSkin(src, live) end
+                end
+            end
         end
     end
 end
-local function addNavBtn(n,label,order)
-    local btn=inst("TextButton",{Name=n.."Btn",Size=UDim2.new(1,0,0,34),BackgroundColor3=T.SIDEBAR,
-        Text="",Font=Enum.Font.GothamSemibold,TextSize=12,TextColor3=T.SEC,
-        TextXAlignment=Enum.TextXAlignment.Left,BorderSizePixel=0,LayoutOrder=order},SidebarList)
-    corner(btn,6)
-    -- left accent bar
-    local acc=inst("Frame",{Name="_accent",Size=UDim2.new(0,2,0,18),Position=UDim2.new(0,0,0.5,-9),
-        BackgroundColor3=T.ACCENT,BorderSizePixel=0,Visible=false},btn)
-    corner(acc,2)
-    inst("TextLabel",{Size=UDim2.new(1,-14,1,0),Position=UDim2.new(0,12,0,0),BackgroundTransparency=1,
-        Text=label,Font=Enum.Font.GothamSemibold,TextSize=12,TextColor3=T.SEC,
-        TextXAlignment=Enum.TextXAlignment.Left},btn)
-    btn.MouseEnter:Connect(function() if State.page~=n then tw(btn,{BackgroundColor3=T.CARD}) end end)
-    btn.MouseLeave:Connect(function() if State.page~=n then tw(btn,{BackgroundColor3=T.SIDEBAR}) end end)
-    btn.MouseButton1Click:Connect(function() NavMgr.go(n) end)
-    NavBtns[n]=btn
+
+-- ─── UNIFIED APPLY / REVERT ───────────────────────────────────────────────────
+local function applyEquippedSkin(weaponType, skinName)
+    if skinName == "Default" or skinName == nil then
+        EquippedSkins[weaponType] = nil
+        revertVisual(weaponType)
+        if _visualHooks[weaponType] then
+            _visualHooks[weaponType]:Disconnect()
+            _visualHooks[weaponType] = nil
+        end
+    else
+        EquippedSkins[weaponType] = skinName
+        -- Engine B only, OR Engine A + Engine B visual overlay
+        if not useHook(skinName) or NEEDS_VISUAL_OVERRIDE[skinName] then
+            -- Try applying immediately if weapon is already live
+            local src  = SkinModelMap[skinName]
+            local live = findLiveModel(weaponType)
+            if src and live then applyVisualSkin(src, live) end
+            -- Also hook for future equips / respawns
+            applyVisualNow(skinName, weaponType)
+            hookVisualForWeapon(weaponType, skinName)
+        end
+    end
+    saveData(EquippedSkins, State.keybind)
 end
 
--- ─── HOME PAGE ───────────────────────────────────────────────────────────────
-local HomePage=newPage("Home");pad(HomePage,28,28,28,28)
-inst("TextLabel",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,
-    Text="Skin Changer",Font=Enum.Font.GothamBold,TextSize=20,
-    TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},HomePage)
-inst("TextLabel",{Size=UDim2.new(1,0,0,16),Position=UDim2.new(0,0,0,34),BackgroundTransparency=1,
-    Text="Local weapon skin override — client side only.",
-    Font=Enum.Font.Gotham,TextSize=11,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},HomePage)
+-- ─── THUMBNAIL ────────────────────────────────────────────────────────────────
+local _thumbCache = {}
+local function getThumbnail(name)
+    if _thumbCache[name] ~= nil then return _thumbCache[name] end
+    local img = ""
+    local function tryFields(d)
+        if not d then return end
+        local v = d.ImageHighResolution or d.Image or d.Thumbnail
+        if v and v ~= "" then img = v end
+    end
+    pcall(function()
+        if ItemLibrary and ItemLibrary.ViewModels then
+            tryFields(ItemLibrary.ViewModels[name])
+        end
+    end)
+    if img == "" then
+        pcall(function() tryFields(getCosmeticData(name)) end)
+    end
+    _thumbCache[name] = img
+    return img
+end
 
-divider(HomePage,62)
+-- ─── THEME ────────────────────────────────────────────────────────────────────
+local T = {
+    BG      = Color3.fromRGB(14, 14, 18),
+    PANEL   = Color3.fromRGB(20, 20, 26),
+    CARD    = Color3.fromRGB(26, 26, 34),
+    CARDH   = Color3.fromRGB(34, 34, 44),
+    CARDSEL = Color3.fromRGB(18, 38, 20),
+    ACCENT  = Color3.fromRGB(110, 130, 255),
+    GREEN   = Color3.fromRGB(50, 200, 100),
+    RED     = Color3.fromRGB(210, 55, 55),
+    YELLOW  = Color3.fromRGB(240, 185, 50),
+    PRI     = Color3.fromRGB(235, 235, 240),
+    SEC     = Color3.fromRGB(120, 120, 135),
+    MUT     = Color3.fromRGB(65, 65, 78),
+    BORDER  = Color3.fromRGB(32, 32, 42),
+    LINE    = Color3.fromRGB(22, 22, 30),
+    SEL     = Color3.fromRGB(22, 26, 58),
+    SELBRD  = Color3.fromRGB(80, 100, 220),
+}
+local TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local function tw(o, p) TweenService:Create(o, TWEEN, p):Play() end
+
+local function inst(cls, props, par)
+    local i = Instance.new(cls)
+    for k, v in pairs(props) do i[k] = v end
+    if par then i.Parent = par end
+    return i
+end
+local function corner(p, r) inst("UICorner", {CornerRadius = UDim.new(0, r or 6)}, p) end
+local function stroke(p, c, t) inst("UIStroke", {Color = c or T.BORDER, Thickness = t or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, p) end
+local function pad(p, a, b, c, d) inst("UIPadding", {PaddingTop = UDim.new(0, a or 8), PaddingRight = UDim.new(0, b or 8), PaddingBottom = UDim.new(0, c or 8), PaddingLeft = UDim.new(0, d or 8)}, p) end
+
+-- ─── CLEANUP ──────────────────────────────────────────────────────────────────
+for _, n in ipairs({
+    "RivalsSkinChangerV3","RivalsSkinChangerV4","RivalsSkinChangerV5",
+    "RivalsSkinChangerV6","RivalsSkinChangerV7","RivalsSkinChangerV8","RivalsSkinChangerV9",
+    "AnihaSkinChanger","RivalsScV3",
+}) do
+    local g = PlayerGui:FindFirstChild(n)
+    if g then g:Destroy() end
+end
+
+-- ─── ROOT ─────────────────────────────────────────────────────────────────────
+local ScreenGui = inst("ScreenGui", {
+    Name = "RivalsScV3", ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true,
+}, PlayerGui)
+
+local Root = inst("Frame", {
+    Size = UDim2.new(0, 980, 0, 660),
+    Position = UDim2.new(0.5, -490, 0.5, -330),
+    BackgroundColor3 = T.BG, BorderSizePixel = 0, ClipsDescendants = true,
+}, ScreenGui)
+corner(Root, 10); stroke(Root, T.BORDER, 1)
+
+-- ─── TITLE BAR ────────────────────────────────────────────────────────────────
+local TitleBar = inst("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = T.PANEL, BorderSizePixel = 0}, Root)
+corner(TitleBar, 10)
+inst("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, TitleBar)
+local dot = inst("Frame", {Size = UDim2.new(0, 6, 0, 6), Position = UDim2.new(0, 14, 0.5, -3), BackgroundColor3 = T.ACCENT, BorderSizePixel = 0}, TitleBar); corner(dot, 3)
+inst("TextLabel", {
+    Size = UDim2.new(0, 300, 1, 0), Position = UDim2.new(0, 26, 0, 0),
+    BackgroundTransparency = 1, Text = "Rivals  —  Skin Changer  V3 Fixed",
+    Font = Enum.Font.GothamBold, TextSize = 13,
+    TextColor3 = T.PRI, TextXAlignment = Enum.TextXAlignment.Left,
+}, TitleBar)
+
+local StatusBadge = inst("TextLabel", {
+    Size = UDim2.new(0, 150, 0, 22), Position = UDim2.new(1, -200, 0.5, -11),
+    BackgroundColor3 = T.CARD, Text = "● Ready",
+    Font = Enum.Font.GothamSemibold, TextSize = 9,
+    TextColor3 = T.SEC, TextXAlignment = Enum.TextXAlignment.Center, BorderSizePixel = 0,
+}, TitleBar)
+corner(StatusBadge, 11); stroke(StatusBadge, T.BORDER, 1)
+
+local CloseBtn = inst("TextButton", {
+    Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -38, 0.5, -14),
+    BackgroundColor3 = T.CARD, Text = "X",
+    Font = Enum.Font.GothamBold, TextSize = 11,
+    TextColor3 = Color3.fromRGB(180, 180, 195), BorderSizePixel = 0,
+}, TitleBar)
+corner(CloseBtn, 7); stroke(CloseBtn, T.BORDER, 1)
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui.Enabled = false end)
+CloseBtn.MouseEnter:Connect(function() tw(CloseBtn, {BackgroundColor3 = T.RED}) end)
+CloseBtn.MouseLeave:Connect(function() tw(CloseBtn, {BackgroundColor3 = T.CARD}) end)
 
 do
-    local total=0;for _,s in pairs(WeaponSkins) do total+=#s end
-    local row=inst("Frame",{Size=UDim2.new(1,0,0,70),Position=UDim2.new(0,0,0,76),BackgroundTransparency=1},HomePage)
-    inst("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder},row)
-    for i,d in ipairs({
-        {val=tostring(#WeaponList),label="Weapons"},
-        {val=tostring(total),label="Skins available"},
-    }) do
-        local c=inst("Frame",{Size=UDim2.new(0.5,-5,1,0),BackgroundColor3=T.CARD,BorderSizePixel=0,LayoutOrder=i},row)
-        corner(c,8);stroke(c,T.BORDER,1);pad(c,14,14,14,16)
-        inst("TextLabel",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,
-            Text=d.val,Font=Enum.Font.GothamBold,TextSize=20,
-            TextColor3=T.ACCENT,TextXAlignment=Enum.TextXAlignment.Left},c)
-        inst("TextLabel",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,0,26),BackgroundTransparency=1,
-            Text=d.label,Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.SEC,
-            TextXAlignment=Enum.TextXAlignment.Left},c)
-    end
+    local drag, ds, sp = false, nil, nil
+    TitleBar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = true; ds = i.Position; sp = Root.Position end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - ds
+            Root.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
+    end)
 end
 
-divider(HomePage,160)
+-- ─── BODY ─────────────────────────────────────────────────────────────────────
+local Body = inst("Frame", {Size = UDim2.new(1, 0, 1, -40), Position = UDim2.new(0, 0, 0, 40), BackgroundTransparency = 1, BorderSizePixel = 0}, Root)
 
-inst("TextLabel",{Size=UDim2.new(1,0,0,16),Position=UDim2.new(0,0,0,174),BackgroundTransparency=1,
-    Text="Toggle GUI  —  "..tostring(State.keybind.Name),Font=Enum.Font.Gotham,
-    TextSize=11,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},HomePage)
+local LEFT_W = 220
+local LeftPanel = inst("Frame", {Size = UDim2.new(0, LEFT_W, 1, 0), BackgroundColor3 = T.PANEL, BorderSizePixel = 0}, Body)
+inst("Frame", {Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, LeftPanel)
 
--- ─── SKIN CHANGER PAGE ───────────────────────────────────────────────────────
-local SkinPage=newPage("Skin Changer")
+local WSearchFrame = inst("Frame", {Size = UDim2.new(1, -16, 0, 30), Position = UDim2.new(0, 8, 0, 8), BackgroundColor3 = T.CARD, BorderSizePixel = 0}, LeftPanel)
+corner(WSearchFrame, 7); stroke(WSearchFrame, T.BORDER, 1)
+local WSearch = inst("TextBox", {
+    Size = UDim2.new(1, -10, 1, 0), Position = UDim2.new(0, 5, 0, 0),
+    BackgroundTransparency = 1, PlaceholderText = "Search weapon...", PlaceholderColor3 = T.MUT,
+    Text = "", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = T.PRI,
+    TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+}, WSearchFrame)
 
--- top bar
-local TopBar=inst("Frame",{Size=UDim2.new(1,0,0,46),BackgroundColor3=T.SIDEBAR,BorderSizePixel=0},SkinPage)
-inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.LINE,BorderSizePixel=0},TopBar)
-pad(TopBar,0,14,0,14)
+local WScroll = inst("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, -48), Position = UDim2.new(0, 0, 0, 48),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+    ScrollBarImageColor3 = T.MUT, CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, LeftPanel)
+local WList = inst("Frame", {Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y}, WScroll)
+inst("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2)}, WList)
+pad(WList, 4, 6, 4, 6)
 
-inst("TextLabel",{Size=UDim2.new(0,90,1,0),BackgroundTransparency=1,Text="Override",
-    Font=Enum.Font.GothamBold,TextSize=12,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
+local RIGHT_W = 270
+local MidPanel = inst("Frame", {
+    Size = UDim2.new(1, -LEFT_W - RIGHT_W, 1, 0), Position = UDim2.new(0, LEFT_W, 0, 0),
+    BackgroundColor3 = T.BG, BorderSizePixel = 0,
+}, Body)
+inst("Frame", {Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, MidPanel)
 
--- toggle pill
-local Pill=inst("TextButton",{Size=UDim2.new(0,46,0,24),Position=UDim2.new(0,96,0.5,-12),BackgroundColor3=T.GREEN,Text="",BorderSizePixel=0},TopBar);corner(Pill,12)
-local Knob=inst("Frame",{Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-21,0.5,-9),BackgroundColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},Pill);corner(Knob,9)
-local PillLbl=inst("TextLabel",{Size=UDim2.new(0,90,1,0),Position=UDim2.new(0,150,0,0),BackgroundTransparency=1,
-    Text="ENABLED",Font=Enum.Font.GothamSemibold,TextSize=11,TextColor3=T.GREEN,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
-local AppliedLbl=inst("TextLabel",{Size=UDim2.new(0,240,1,0),Position=UDim2.new(1,-248,0,0),BackgroundTransparency=1,
-    Text="",Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Right},TopBar)
+local MidHeader = inst("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = T.PANEL, BorderSizePixel = 0}, MidPanel)
+inst("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, MidHeader)
+local MidTitle = inst("TextLabel", {
+    Size = UDim2.new(1, -14, 1, 0), Position = UDim2.new(0, 14, 0, 0),
+    BackgroundTransparency = 1, Text = "SELECT A WEAPON",
+    Font = Enum.Font.GothamBold, TextSize = 10,
+    TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Left,
+}, MidHeader)
 
-local function updateToggle()
-    if State.enabled then
-        tw(Pill,{BackgroundColor3=T.GREEN});tw(Knob,{Position=UDim2.new(1,-21,0.5,-9)})
-        PillLbl.Text="ENABLED";PillLbl.TextColor3=T.GREEN
-    else
-        tw(Pill,{BackgroundColor3=T.MUT});tw(Knob,{Position=UDim2.new(0,3,0.5,-9)})
-        PillLbl.Text="DISABLED";PillLbl.TextColor3=T.SEC
-    end
-end
-Pill.MouseButton1Click:Connect(function()
-    State.enabled=not State.enabled;updateToggle()
-    if State.enabled then SkinEngine.refreshAll() else SkinEngine.revertAll() end
+local SkinScroll = inst("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, -40), Position = UDim2.new(0, 0, 0, 40),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+    ScrollBarImageColor3 = T.MUT, CanvasSize = UDim2.new(0, 0, 0, 0),
+}, MidPanel)
+local SkinGrid = inst("Frame", {Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1}, SkinScroll)
+local SkinGridLayout = inst("UIGridLayout", {
+    CellSize = UDim2.new(0, 128, 0, 158), CellPadding = UDim2.new(0, 10, 0, 10),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, SkinGrid)
+pad(SkinGrid, 12, 12, 12, 12)
+SkinGridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    SkinScroll.CanvasSize = UDim2.new(0, 0, 0, SkinGridLayout.AbsoluteContentSize.Y + 24)
 end)
 
--- columns
-local Cols=inst("Frame",{Size=UDim2.new(1,0,1,-46),Position=UDim2.new(0,0,0,46),BackgroundTransparency=1},SkinPage)
-local WCol=inst("Frame",{Size=UDim2.new(0,168,1,0),BackgroundColor3=T.BG,BorderSizePixel=0},Cols)
-inst("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=T.LINE,BorderSizePixel=0},WCol)
+local RightPanel = inst("Frame", {
+    Size = UDim2.new(0, RIGHT_W, 1, 0), Position = UDim2.new(1, -RIGHT_W, 0, 0),
+    BackgroundColor3 = T.PANEL, BorderSizePixel = 0,
+}, Body)
+inst("Frame", {Size = UDim2.new(0, 1, 1, 0), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, RightPanel)
+pad(RightPanel, 14, 14, 14, 14)
 
-local WSearchBar=inst("Frame",{Size=UDim2.new(1,-12,0,28),Position=UDim2.new(0,6,0,7),BackgroundColor3=T.CARD,BorderSizePixel=0},WCol);corner(WSearchBar,7);stroke(WSearchBar,T.BORDER,1)
-local WSearch=inst("TextBox",{Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,5,0,0),BackgroundTransparency=1,
-    PlaceholderText="Search weapons...",PlaceholderColor3=T.MUT,Text="",Font=Enum.Font.Gotham,
-    TextSize=11,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false},WSearchBar)
-local WScroll=inst("ScrollingFrame",{Size=UDim2.new(1,0,1,-44),Position=UDim2.new(0,0,0,44),
-    BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
-    ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},WCol)
-local WList=inst("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.Y},WScroll)
-inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,1)},WList);pad(WList,4,6,4,6)
+local PreviewFrame = inst("Frame", {Size = UDim2.new(1, 0, 0, 190), BackgroundColor3 = T.CARD, BorderSizePixel = 0}, RightPanel)
+corner(PreviewFrame, 10); stroke(PreviewFrame, T.BORDER, 1)
+local PreviewImg = inst("ImageLabel", {
+    Size = UDim2.new(0.82, 0, 0.82, 0), Position = UDim2.new(0.09, 0, 0.09, 0),
+    BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit,
+}, PreviewFrame)
+local PreviewNone = inst("TextLabel", {
+    Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    Text = "No Preview", Font = Enum.Font.Gotham, TextSize = 11,
+    TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Center,
+}, PreviewFrame)
 
-local SCol=inst("Frame",{Size=UDim2.new(1,-168,1,0),Position=UDim2.new(0,168,0,0),BackgroundColor3=T.BG,BorderSizePixel=0},Cols)
-local SHdr=inst("TextLabel",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,Text="SELECT A WEAPON",
-    Font=Enum.Font.GothamBold,TextSize=9,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},SCol)
-pad(SHdr,10,0,0,14)
+local PreviewSkinName = inst("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 0, 198),
+    BackgroundTransparency = 1, Text = "—",
+    Font = Enum.Font.GothamBold, TextSize = 14,
+    TextColor3 = T.PRI, TextXAlignment = Enum.TextXAlignment.Left,
+}, RightPanel)
+local PreviewWeaponLabel = inst("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 222),
+    BackgroundTransparency = 1, Text = "",
+    Font = Enum.Font.Gotham, TextSize = 10,
+    TextColor3 = T.SEC, TextXAlignment = Enum.TextXAlignment.Left,
+}, RightPanel)
+local EngineBadge = inst("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 238),
+    BackgroundTransparency = 1, Text = "",
+    Font = Enum.Font.Gotham, TextSize = 9,
+    TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Left,
+}, RightPanel)
 
-local SSearchBar=inst("Frame",{Size=UDim2.new(1,-14,0,28),Position=UDim2.new(0,7,0,34),BackgroundColor3=T.CARD,BorderSizePixel=0},SCol);corner(SSearchBar,7);stroke(SSearchBar,T.BORDER,1)
-local SSearch=inst("TextBox",{Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,5,0,0),BackgroundTransparency=1,
-    PlaceholderText="Search skins...",PlaceholderColor3=T.MUT,Text="",Font=Enum.Font.Gotham,
-    TextSize=11,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false},SSearchBar)
-local SScroll=inst("ScrollingFrame",{Size=UDim2.new(1,0,1,-68),Position=UDim2.new(0,0,0,68),
-    BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
-    ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},SCol)
-local SList=inst("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.Y},SScroll)
-inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,3)},SList);pad(SList,4,10,4,10)
-local SPlaceholder=inst("TextLabel",{Size=UDim2.new(1,0,0,60),BackgroundTransparency=1,
-    Text="← Select a weapon",Font=Enum.Font.Gotham,TextSize=12,TextColor3=T.MUT,
-    TextXAlignment=Enum.TextXAlignment.Center,TextWrapped=true},SList)
+local EquipBtn = inst("TextButton", {
+    Size = UDim2.new(1, 0, 0, 36), Position = UDim2.new(0, 0, 0, 258),
+    BackgroundColor3 = T.ACCENT, Text = "Equip Skin",
+    Font = Enum.Font.GothamBold, TextSize = 13,
+    TextColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0,
+}, RightPanel)
+corner(EquipBtn, 8)
+EquipBtn.MouseEnter:Connect(function() tw(EquipBtn, {BackgroundColor3 = Color3.fromRGB(130, 150, 255)}) end)
+EquipBtn.MouseLeave:Connect(function() tw(EquipBtn, {BackgroundColor3 = T.ACCENT}) end)
 
-local function buildSkinRows(weaponName)
-    SHdr.Text=weaponName:upper()
-    for _,c in ipairs(SList:GetChildren()) do
-        if c:IsA("TextButton") or (c:IsA("Frame") and c~=SPlaceholder) then c:Destroy() end
+local RevertBtn = inst("TextButton", {
+    Size = UDim2.new(1, 0, 0, 28), Position = UDim2.new(0, 0, 0, 302),
+    BackgroundColor3 = T.CARD, Text = "Revert to Default",
+    Font = Enum.Font.GothamSemibold, TextSize = 11,
+    TextColor3 = T.SEC, BorderSizePixel = 0,
+}, RightPanel)
+corner(RevertBtn, 7); stroke(RevertBtn, T.BORDER, 1)
+RevertBtn.MouseEnter:Connect(function() tw(RevertBtn, {BackgroundColor3 = T.CARDH}) end)
+RevertBtn.MouseLeave:Connect(function() tw(RevertBtn, {BackgroundColor3 = T.CARD}) end)
+
+inst("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 342), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, RightPanel)
+inst("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 354),
+    BackgroundTransparency = 1, Text = "ACTIVE OVERRIDES",
+    Font = Enum.Font.GothamBold, TextSize = 9,
+    TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Left,
+}, RightPanel)
+
+local SummaryScroll = inst("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 0, 172), Position = UDim2.new(0, 0, 0, 372),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 2,
+    ScrollBarImageColor3 = T.MUT, CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, RightPanel)
+inst("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 3)}, SummaryScroll)
+
+inst("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -62), BackgroundColor3 = T.LINE, BorderSizePixel = 0}, RightPanel)
+
+local KeybindBtn = inst("TextButton", {
+    Size = UDim2.new(1, 0, 0, 28), Position = UDim2.new(0, 0, 1, -58),
+    BackgroundColor3 = T.CARD,
+    Text = "Keybind: " .. tostring(State.keybind.Name),
+    Font = Enum.Font.GothamSemibold, TextSize = 11,
+    TextColor3 = T.ACCENT, BorderSizePixel = 0,
+}, RightPanel)
+corner(KeybindBtn, 7); stroke(KeybindBtn, T.SELBRD, 1)
+
+local ClearAllBtn = inst("TextButton", {
+    Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 1, -26),
+    BackgroundColor3 = T.BG, Text = "Clear All Skins",
+    Font = Enum.Font.GothamSemibold, TextSize = 11,
+    TextColor3 = T.RED, BorderSizePixel = 0,
+}, RightPanel)
+corner(ClearAllBtn, 7); stroke(ClearAllBtn, Color3.fromRGB(80, 25, 25), 1)
+ClearAllBtn.MouseEnter:Connect(function() tw(ClearAllBtn, {BackgroundColor3 = Color3.fromRGB(40, 10, 10)}) end)
+ClearAllBtn.MouseLeave:Connect(function() tw(ClearAllBtn, {BackgroundColor3 = T.BG}) end)
+
+-- ─── SELECTION STATE ──────────────────────────────────────────────────────────
+local SelectedWeapon = nil
+local SelectedSkin   = nil
+local SkinCards      = {}
+
+local function rebuildSummary()
+    for _, c in ipairs(SummaryScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
     end
-    SPlaceholder.Visible=false
-    local skins=WeaponSkins[weaponName] or {};local search=SSearch.Text:lower();local order=1
-    for _,sm in ipairs(skins) do
-        if search=="" or sm.Name:lower():find(search,1,true) then
-            local isApplied=(State.pendingApply[weaponName]==sm)
-            local hasAnims=next(getSkinSlots(toKey(weaponName),toKey(sm.Name)))~=nil
-
-            local row=inst("TextButton",{Size=UDim2.new(1,0,0,42),
-                BackgroundColor3=isApplied and T.SEL or T.CARD,
-                BorderSizePixel=0,Text="",LayoutOrder=order},SList)
-            corner(row,7)
-            stroke(row,isApplied and T.SELBRD or T.BORDER,isApplied and 1 or 1)
-
-            inst("TextLabel",{Size=UDim2.new(1,-70,0,20),Position=UDim2.new(0,12,0,isApplied and 5 or 11),
-                BackgroundTransparency=1,Text=sm.Name,Font=Enum.Font.GothamSemibold,TextSize=12,
-                TextColor3=isApplied and Color3.fromRGB(170,185,255) or T.PRI,
-                TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},row)
-
-            if hasAnims and isApplied then
-                inst("TextLabel",{Size=UDim2.new(1,-70,0,12),Position=UDim2.new(0,12,0,26),
-                    BackgroundTransparency=1,Text="custom animations",Font=Enum.Font.Gotham,TextSize=9,
-                    TextColor3=T.PURPLE,TextXAlignment=Enum.TextXAlignment.Left},row)
-            elseif hasAnims then
-                inst("TextLabel",{Size=UDim2.new(1,-70,0,12),Position=UDim2.new(0,12,0,24),
-                    BackgroundTransparency=1,Text="custom animations",Font=Enum.Font.Gotham,TextSize=9,
-                    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},row)
-            end
-
-            local applyBtn=inst("TextButton",{Size=UDim2.new(0,52,0,26),Position=UDim2.new(1,-60,0.5,-13),
-                BackgroundColor3=isApplied and T.GREEN or T.ACCENT,
-                Text=isApplied and "On" or "Apply",Font=Enum.Font.GothamBold,TextSize=11,
-                TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},row)
-            corner(applyBtn,6)
-
-            if isApplied then
-                applyBtn.Text="On"
-                applyBtn.MouseButton1Click:Connect(function()
-                    State.pendingApply[weaponName]=nil;SkinEngine.revertOne(weaponName)
-                    saveData(State.pendingApply,State.keybind)
-                    AppliedLbl.Text="Reverted "..weaponName;AppliedLbl.TextColor3=T.YELLOW
-                    task.delay(2.5,function() AppliedLbl.TextColor3=T.SEC end)
-                    buildSkinRows(weaponName);buildWeaponList(WSearch.Text)
-                end)
-            end
-
-            local function doApply()
-                if not State.enabled then
-                    PillLbl.Text="Enable first";PillLbl.TextColor3=T.YELLOW
-                    task.delay(1.5,updateToggle);return
-                end
-                State.pendingApply[weaponName]=sm
-                local vOk=SkinEngine.apply(sm,weaponName)
-                saveData(State.pendingApply,State.keybind)
-                if vOk then
-                    AppliedLbl.Text=sm.Name.." → "..weaponName;AppliedLbl.TextColor3=T.GREEN
-                else
-                    AppliedLbl.Text="Queued — equip "..weaponName;AppliedLbl.TextColor3=T.YELLOW
-                end
-                task.delay(3.5,function() AppliedLbl.TextColor3=T.SEC end)
-                buildSkinRows(weaponName);buildWeaponList(WSearch.Text)
-            end
-
-            if not isApplied then applyBtn.MouseButton1Click:Connect(doApply) end
-            row.MouseButton1Click:Connect(function() if not isApplied then doApply() end end)
-
-            local hoverCol = isApplied and T.SEL or T.CARD
-            row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.CARDH}) end)
-            row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=hoverCol}) end)
-            order+=1
+    local order = 1; local any = false
+    for w, s in pairs(EquippedSkins) do
+        if s and s ~= "Default" then
+            any = true
+            local row = inst("Frame", {
+                Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = T.CARD,
+                BorderSizePixel = 0, LayoutOrder = order,
+            }, SummaryScroll)
+            corner(row, 5); pad(row, 0, 6, 0, 8)
+            inst("TextLabel", {
+                Size = UDim2.new(0.46, 0, 1, 0), BackgroundTransparency = 1,
+                Text = w, Font = Enum.Font.GothamSemibold, TextSize = 9,
+                TextColor3 = T.SEC, TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            }, row)
+            inst("TextLabel", {
+                Size = UDim2.new(0.54, 0, 1, 0), Position = UDim2.new(0.46, 0, 0, 0),
+                BackgroundTransparency = 1, Text = s,
+                Font = Enum.Font.GothamSemibold, TextSize = 9,
+                TextColor3 = T.GREEN, TextXAlignment = Enum.TextXAlignment.Right,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            }, row)
+            order += 1
         end
     end
-    if order==1 then SPlaceholder.Text='No results for "'..SSearch.Text..'"';SPlaceholder.Visible=true end
+    if not any then
+        inst("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1,
+            Text = "None active", Font = Enum.Font.Gotham, TextSize = 10,
+            TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1,
+        }, SummaryScroll)
+    end
 end
-SSearch:GetPropertyChangedSignal("Text"):Connect(function() if State.selectedWeapon then buildSkinRows(State.selectedWeapon) end end)
+
+local function selectCard(skinName, thumb)
+    SelectedSkin = skinName
+    PreviewImg.Image = thumb or ""
+    PreviewNone.Visible = (not thumb or thumb == "")
+    PreviewSkinName.Text = skinName
+    PreviewWeaponLabel.Text = SelectedWeapon or ""
+    -- Grey out equip button for WIP skins
+    if NEEDS_VISUAL_OVERRIDE[skinName] then
+        EquipBtn.Text = "Not Available"
+        EquipBtn.BackgroundColor3 = T.MUT
+        EngineBadge.Text = "⚠ Work in progress — coming soon"
+        EngineBadge.TextColor3 = T.RED
+    else
+        EquipBtn.Text = "Equip Skin"
+        EquipBtn.BackgroundColor3 = T.ACCENT
+        if skinName == "Default" then
+            EngineBadge.Text = ""
+        elseif useHook(skinName) then
+            EngineBadge.Text = "Engine: Hook (native)"
+            EngineBadge.TextColor3 = T.GREEN
+        else
+            EngineBadge.Text = "Engine: Visual (weld)"
+            EngineBadge.TextColor3 = T.YELLOW
+        end
+    end
+    for sn, card in pairs(SkinCards) do
+        local isEquipped = SelectedWeapon and EquippedSkins[SelectedWeapon] == sn
+        if sn == skinName then
+            tw(card, {BackgroundColor3 = T.SEL})
+            local ring = card:FindFirstChild("_ring"); if ring then ring.Visible = true end
+        elseif isEquipped then
+            tw(card, {BackgroundColor3 = T.CARDSEL})
+            local ring = card:FindFirstChild("_ring"); if ring then ring.Visible = false end
+        else
+            tw(card, {BackgroundColor3 = T.CARD})
+            local ring = card:FindFirstChild("_ring"); if ring then ring.Visible = false end
+        end
+    end
+end
+
+local function buildSkinGrid(weaponName)
+    for _, c in ipairs(SkinGrid:GetChildren()) do
+        if c:IsA("ImageButton") or c:IsA("Frame") then c:Destroy() end
+    end
+    SkinCards = {}; SelectedSkin = nil
+    MidTitle.Text = weaponName:upper()
+    local skins   = SkinLists[weaponName] or {}
+    local equipped = EquippedSkins[weaponName]
+    for i, skinName in ipairs(skins) do
+        local isEquipped = (equipped == skinName) or (skinName == "Default" and (not equipped or equipped == "Default"))
+        local thumb = getThumbnail(skinName)
+        local card = inst("ImageButton", {
+            Size = UDim2.new(0, 128, 0, 158),
+            BackgroundColor3 = isEquipped and T.CARDSEL or T.CARD,
+            BorderSizePixel = 0, Image = "", LayoutOrder = i,
+        }, SkinGrid)
+        corner(card, 9); stroke(card, isEquipped and T.SELBRD or T.BORDER, 1)
+        local imgFrame = inst("Frame", {
+            Size = UDim2.new(1, -12, 0, 96), Position = UDim2.new(0, 6, 0, 6),
+            BackgroundColor3 = T.BG, BorderSizePixel = 0,
+        }, card); corner(imgFrame, 7)
+        inst("ImageLabel", {
+            Size = UDim2.new(0.9, 0, 0.9, 0), Position = UDim2.new(0.05, 0, 0.05, 0),
+            BackgroundTransparency = 1, Image = thumb,
+            ScaleType = Enum.ScaleType.Fit, BorderSizePixel = 0,
+        }, imgFrame)
+        if not thumb or thumb == "" then
+            inst("TextLabel", {
+                Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+                Text = "?", Font = Enum.Font.GothamBold, TextSize = 28,
+                TextColor3 = T.MUT, TextXAlignment = Enum.TextXAlignment.Center,
+            }, imgFrame)
+        end
+        inst("TextLabel", {
+            Size = UDim2.new(1, -8, 0, 36), Position = UDim2.new(0, 4, 0, 106),
+            BackgroundTransparency = 1, Text = skinName,
+            Font = Enum.Font.GothamSemibold, TextSize = 10,
+            TextColor3 = T.PRI, TextXAlignment = Enum.TextXAlignment.Center, TextWrapped = true,
+        }, card)
+        if isEquipped then
+            local badge = inst("TextLabel", {
+                Size = UDim2.new(0, 58, 0, 16), Position = UDim2.new(0, 4, 0, 4),
+                BackgroundColor3 = T.GREEN, Text = "EQUIPPED",
+                Font = Enum.Font.GothamBold, TextSize = 7,
+                TextColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0,
+            }, card); corner(badge, 4)
+        end
+        if NEEDS_VISUAL_OVERRIDE[skinName] then
+            local vbadge = inst("TextLabel", {
+                Size = UDim2.new(0, 58, 0, 14), Position = UDim2.new(1, -62, 0, 4),
+                BackgroundColor3 = T.RED, Text = "⚠ WIP",
+                Font = Enum.Font.GothamBold, TextSize = 7,
+                TextColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0,
+            }, card); corner(vbadge, 4)
+        end
+        local ring = inst("Frame", {
+            Name = "_ring", Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false,
+        }, card)
+        stroke(ring, T.ACCENT, 2); corner(ring, 9)
+        SkinCards[skinName] = card
+        card.MouseEnter:Connect(function()
+            if SelectedSkin ~= skinName then tw(card, {BackgroundColor3 = T.CARDH}) end
+        end)
+        card.MouseLeave:Connect(function()
+            if SelectedSkin ~= skinName then
+                local eq = (EquippedSkins[weaponName] == skinName) or (skinName == "Default" and not EquippedSkins[weaponName])
+                tw(card, {BackgroundColor3 = eq and T.CARDSEL or T.CARD})
+            end
+        end)
+        card.MouseButton1Click:Connect(function() selectCard(skinName, thumb) end)
+    end
+    local cur = EquippedSkins[weaponName]
+    if cur and SkinCards[cur] then selectCard(cur, getThumbnail(cur))
+    else selectCard("Default", getThumbnail("Default")) end
+end
 
 local function buildWeaponList(filter)
-    filter=(filter or ""):lower()
-    for _,c in ipairs(WList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-    local order=1
-    for _,wn in ipairs(WeaponList) do
-        if filter=="" or wn:lower():find(filter,1,true) then
-            local isSel=(State.selectedWeapon==wn)
-            local hasApp=(State.pendingApply[wn]~=nil)
-            local btn=inst("TextButton",{Name=wn,Size=UDim2.new(1,0,0,32),
-                BackgroundColor3=isSel and T.SEL or T.BG,
-                BorderSizePixel=0,Text="",LayoutOrder=order},WList)
-            corner(btn,6)
-            if isSel then stroke(btn,T.SELBRD,1) end
-
-            local lbl=inst("TextLabel",{Size=UDim2.new(1,-12,1,0),Position=UDim2.new(0,10,0,0),
-                BackgroundTransparency=1,
-                Text=wn,Font=Enum.Font.GothamSemibold,TextSize=11,
-                TextColor3=isSel and Color3.fromRGB(170,185,255) or (hasApp and T.GREEN or T.SEC),
-                TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},btn)
-
-            -- applied dot
+    filter = (filter or ""):lower()
+    for _, c in ipairs(WList:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    local order = 1
+    for _, wn in ipairs(WeaponList) do
+        if filter == "" or wn:lower():find(filter, 1, true) then
+            local isSel  = (SelectedWeapon == wn)
+            local hasApp = (EquippedSkins[wn] and EquippedSkins[wn] ~= "Default")
+            local btn = inst("TextButton", {
+                Size = UDim2.new(1, 0, 0, 32),
+                BackgroundColor3 = isSel and T.SEL or T.BG,
+                BorderSizePixel = 0, Text = "", LayoutOrder = order,
+            }, WList)
+            corner(btn, 6)
+            if isSel then stroke(btn, T.SELBRD, 1) end
+            inst("TextLabel", {
+                Size = UDim2.new(1, -16, 1, 0), Position = UDim2.new(0, 10, 0, 0),
+                BackgroundTransparency = 1, Text = wn,
+                Font = Enum.Font.GothamSemibold, TextSize = 11,
+                TextColor3 = isSel and Color3.fromRGB(170, 185, 255) or (hasApp and T.GREEN or T.SEC),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            }, btn)
             if hasApp then
-                inst("Frame",{Size=UDim2.new(0,4,0,4),Position=UDim2.new(1,-10,0.5,-2),
-                    BackgroundColor3=T.GREEN,BorderSizePixel=0},btn)
-                    :GetPropertyChangedSignal("Parent"):Connect(function() end)
-                local dot=btn:FindFirstChildWhichIsA("Frame")
-                if dot then corner(dot,2) end
+                local d = inst("Frame", {
+                    Size = UDim2.new(0, 4, 0, 4), Position = UDim2.new(1, -10, 0.5, -2),
+                    BackgroundColor3 = T.GREEN, BorderSizePixel = 0,
+                }, btn); corner(d, 2)
             end
-
-            btn.MouseEnter:Connect(function() if not isSel then tw(btn,{BackgroundColor3=T.CARD}) end end)
-            btn.MouseLeave:Connect(function() if not isSel then tw(btn,{BackgroundColor3=T.BG}) end end)
+            btn.MouseEnter:Connect(function() if not isSel then tw(btn, {BackgroundColor3 = T.CARD}) end end)
+            btn.MouseLeave:Connect(function() if not isSel then tw(btn, {BackgroundColor3 = T.BG}) end end)
             btn.MouseButton1Click:Connect(function()
-                State.selectedWeapon=wn;SSearch.Text=""
-                buildWeaponList(WSearch.Text);buildSkinRows(wn)
+                SelectedWeapon = wn; buildSkinGrid(wn); buildWeaponList(WSearch.Text)
             end)
-            order+=1
+            order += 1
         end
     end
 end
 WSearch:GetPropertyChangedSignal("Text"):Connect(function() buildWeaponList(WSearch.Text) end)
 
--- ─── SETTINGS PAGE ───────────────────────────────────────────────────────────
-local SettingsPage=newPage("Settings");pad(SettingsPage,28,28,28,28)
+-- ─── BUTTON HANDLERS ──────────────────────────────────────────────────────────
+EquipBtn.MouseButton1Click:Connect(function()
+    if not SelectedWeapon or not SelectedSkin then return end
+    if NEEDS_VISUAL_OVERRIDE[SelectedSkin] then
+        StatusBadge.Text = "⚠ WIP — not available yet"; StatusBadge.TextColor3 = T.RED
+        tw(EquipBtn, {BackgroundColor3 = T.RED})
+        task.delay(0.7, function() tw(EquipBtn, {BackgroundColor3 = T.ACCENT}) end)
+        task.delay(3, function() StatusBadge.Text = "● Ready"; StatusBadge.TextColor3 = T.SEC end)
+        return
+    end
+    applyEquippedSkin(SelectedWeapon, SelectedSkin)
+    StatusBadge.Text = "✓ " .. SelectedSkin; StatusBadge.TextColor3 = T.GREEN
+    task.delay(3, function() StatusBadge.Text = "● Ready"; StatusBadge.TextColor3 = T.SEC end)
+    tw(EquipBtn, {BackgroundColor3 = T.GREEN})
+    task.delay(0.7, function() tw(EquipBtn, {BackgroundColor3 = T.ACCENT}) end)
+    buildSkinGrid(SelectedWeapon); WSearch.Text = ""; buildWeaponList(""); rebuildSummary()
+end)
 
-inst("TextLabel",{Size=UDim2.new(1,0,0,28),BackgroundTransparency=1,
-    Text="Settings",Font=Enum.Font.GothamBold,TextSize=18,
-    TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
-inst("TextLabel",{Size=UDim2.new(1,0,0,16),Position=UDim2.new(0,0,0,32),BackgroundTransparency=1,
-    Text="Changes are saved automatically, in your executor's folder.",Font=Enum.Font.Gotham,TextSize=10,
-    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
+RevertBtn.MouseButton1Click:Connect(function()
+    if not SelectedWeapon then return end
+    applyEquippedSkin(SelectedWeapon, "Default")
+    StatusBadge.Text = "↩ Reverted"; StatusBadge.TextColor3 = T.YELLOW
+    task.delay(2.5, function() StatusBadge.Text = "● Ready"; StatusBadge.TextColor3 = T.SEC end)
+    buildSkinGrid(SelectedWeapon); WSearch.Text = ""; buildWeaponList(""); rebuildSummary()
+end)
 
-divider(SettingsPage,60)
-
--- section: keybind
-inst("TextLabel",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,0,74),BackgroundTransparency=1,
-    Text="TOGGLE KEYBIND",Font=Enum.Font.GothamBold,TextSize=9,
-    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
-
-local KeybindRow=inst("Frame",{Size=UDim2.new(1,0,0,44),Position=UDim2.new(0,0,0,96),
-    BackgroundColor3=T.CARD,BorderSizePixel=0},SettingsPage)
-corner(KeybindRow,8);stroke(KeybindRow,T.BORDER,1);pad(KeybindRow,0,14,0,14)
-
-inst("TextLabel",{Size=UDim2.new(0.5,0,1,0),BackgroundTransparency=1,
-    Text="Press to open / close the GUI",Font=Enum.Font.Gotham,TextSize=11,
-    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},KeybindRow)
-
-local KeybindBtn=inst("TextButton",{Size=UDim2.new(0,120,0,28),Position=UDim2.new(1,-124,0.5,-14),
-    BackgroundColor3=T.BG,Text=tostring(State.keybind.Name),
-    Font=Enum.Font.GothamBold,TextSize=11,TextColor3=T.ACCENT,BorderSizePixel=0},KeybindRow)
-corner(KeybindBtn,6);stroke(KeybindBtn,T.SELBRD,1)
+ClearAllBtn.MouseButton1Click:Connect(function()
+    for w in pairs(EquippedSkins) do applyEquippedSkin(w, "Default") end
+    saveData(EquippedSkins, State.keybind)
+    if SelectedWeapon then buildSkinGrid(SelectedWeapon) end
+    WSearch.Text = ""; buildWeaponList(""); rebuildSummary()
+    ClearAllBtn.Text = "Cleared ✓"; ClearAllBtn.TextColor3 = T.GREEN
+    task.delay(1.5, function() ClearAllBtn.Text = "Clear All Skins"; ClearAllBtn.TextColor3 = T.RED end)
+end)
 
 KeybindBtn.MouseButton1Click:Connect(function()
     if State.rebinding then return end
-    State.rebinding=true
-    KeybindBtn.Text="Press any key..."
-    KeybindBtn.TextColor3=T.YELLOW
-    tw(KeybindBtn,{BackgroundColor3=Color3.fromRGB(40,35,10)})
+    State.rebinding = true
+    KeybindBtn.Text = "Press any key..."; KeybindBtn.TextColor3 = T.YELLOW
+    tw(KeybindBtn, {BackgroundColor3 = Color3.fromRGB(40, 35, 10)})
     local conn
-    conn=UserInputService.InputBegan:Connect(function(i,gpe)
+    conn = UserInputService.InputBegan:Connect(function(i, gpe)
         if gpe then return end
-        if i.UserInputType==Enum.UserInputType.Keyboard then
-            State.keybind=i.KeyCode
-            KeybindBtn.Text=tostring(i.KeyCode.Name)
-            KeybindBtn.TextColor3=T.ACCENT
-            tw(KeybindBtn,{BackgroundColor3=T.BG})
-            saveData(State.pendingApply,State.keybind)
-            State.rebinding=false
-            conn:Disconnect()
+        if i.UserInputType == Enum.UserInputType.Keyboard then
+            State.keybind = i.KeyCode
+            KeybindBtn.Text = "Keybind: " .. tostring(i.KeyCode.Name)
+            KeybindBtn.TextColor3 = T.ACCENT
+            tw(KeybindBtn, {BackgroundColor3 = T.CARD})
+            saveData(EquippedSkins, State.keybind)
+            State.rebinding = false; conn:Disconnect()
         end
     end)
 end)
 
-divider(SettingsPage,154)
-
--- section: clear all
-inst("TextLabel",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,0,168),BackgroundTransparency=1,
-    Text="APPLIED SKINS",Font=Enum.Font.GothamBold,TextSize=9,
-    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
-
-local ClearRow=inst("Frame",{Size=UDim2.new(1,0,0,44),Position=UDim2.new(0,0,0,190),
-    BackgroundColor3=T.CARD,BorderSizePixel=0},SettingsPage)
-corner(ClearRow,8);stroke(ClearRow,T.BORDER,1);pad(ClearRow,0,14,0,14)
-
-inst("TextLabel",{Size=UDim2.new(0.6,0,1,0),BackgroundTransparency=1,
-    Text="Remove all active skin overrides",Font=Enum.Font.Gotham,TextSize=11,
-    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},ClearRow)
-
-local ClearBtn=inst("TextButton",{Size=UDim2.new(0,100,0,28),Position=UDim2.new(1,-104,0.5,-14),
-    BackgroundColor3=T.BG,Text="Clear All",Font=Enum.Font.GothamBold,TextSize=11,
-    TextColor3=T.RED,BorderSizePixel=0},ClearRow)
-corner(ClearBtn,6);stroke(ClearBtn,Color3.fromRGB(80,25,25),1)
-onHover(ClearBtn,T.BG,Color3.fromRGB(40,10,10))
-
-ClearBtn.MouseButton1Click:Connect(function()
-    SkinEngine.revertAll()
-    State.pendingApply={}
-    saveData(State.pendingApply,State.keybind)
-    if State.selectedWeapon then buildSkinRows(State.selectedWeapon) end
-    buildWeaponList(WSearch.Text)
-    ClearBtn.Text="Done"
-    ClearBtn.TextColor3=T.GREEN
-    task.delay(1.5,function() ClearBtn.Text="Clear All";ClearBtn.TextColor3=T.RED end)
+UserInputService.InputBegan:Connect(function(i, gpe)
+    if gpe or State.rebinding then return end
+    if i.KeyCode == State.keybind then ScreenGui.Enabled = not ScreenGui.Enabled end
 end)
 
--- ─── NAV BUTTONS ─────────────────────────────────────────────────────────────
-addNavBtn("Home","Home",1)
-addNavBtn("Skin Changer","Skin Changer",2)
-addNavBtn("Settings","Settings",3)
-
--- ─── LIVE VIEWMODEL WATCHER ──────────────────────────────────────────────────
-local hookedFP=nil
-
-local function applyWhenReady(weapon,child)
-    task.wait(0.4)
-    if not child.Parent then return end
-    local vi=VMAInstances[weapon]
-    if vi then
-        local equipKey=vi._equip_animation
-        local equipTrack=equipKey and vi._animation_tracks and vi._animation_tracks[equipKey]
-        if equipTrack then
-            local waited=0
-            while equipTrack.IsPlaying and waited<1.5 do task.wait(0.05);waited+=0.05 end
-        end
-    else
-        task.wait(0.5)
-    end
-    if not child.Parent then return end
-    local skin=State.pendingApply[weapon]
-    if skin and State.enabled then
-        local ok=fullApplySkin(skin,weapon,child)
-        if ok then StatusBadge.Text="● "..weapon;StatusBadge.TextColor3=T.GREEN;buildWeaponList(WSearch.Text) end
-    end
-end
-
-local function onNewViewModel(child)
-    if not child:IsA("Model") or not child.Name:find(PlayerName,1,true) then return end
-    local weapon=child.Name:match("^.+ %- (.+) %- .+$");if not weapon then return end
-    if State.applyDebounce[weapon] then return end
-    State.applyDebounce[weapon]=true
-    VMAInstances[weapon]=nil;AnimOriginals[weapon]=nil;TrackCache[weapon]=nil;ActiveSkins[weapon]=nil
-    task.spawn(function()
-        applyWhenReady(weapon,child)
-        State.applyDebounce[weapon]=nil
-    end)
-end
+-- ─── FIRSTPERSON WATCHER ──────────────────────────────────────────────────────
+local hookedFP = nil
 
 local function onFirstPerson(fp)
-    if fp==hookedFP then return end;hookedFP=fp;FirstPerson=fp
-    for _,c in ipairs(fp:GetChildren()) do task.spawn(onNewViewModel,c) end
-    fp.ChildAdded:Connect(function(c) if State.enabled then task.spawn(onNewViewModel,c) end end)
+    if fp == hookedFP then return end
+    hookedFP = fp; FirstPerson = fp
+    for weaponType, skinName in pairs(EquippedSkins) do
+        if skinName and skinName ~= "Default" then
+            -- Hook visual for both pure Engine B skins and visual override skins
+            if not useHook(skinName) or NEEDS_VISUAL_OVERRIDE[skinName] then
+                hookVisualForWeapon(weaponType, skinName)
+            end
+        end
+    end
 end
+
 local function onViewModels(vm)
-    local fp=vm:FindFirstChild("FirstPerson");if fp then onFirstPerson(fp) end
-    vm.ChildAdded:Connect(function(c) if c.Name=="FirstPerson" then onFirstPerson(c) end end)
+    local fp = vm:FindFirstChild("FirstPerson")
+    if fp then onFirstPerson(fp) end
+    vm.ChildAdded:Connect(function(c)
+        if c.Name == "FirstPerson" then onFirstPerson(c) end
+    end)
 end
-local evm=workspace:FindFirstChild("ViewModels");if evm then onViewModels(evm) end
-workspace.ChildAdded:Connect(function(c) if c.Name=="ViewModels" then onViewModels(c) end end)
+
+local evm = workspace:FindFirstChild("ViewModels")
+if evm then onViewModels(evm) end
+workspace.ChildAdded:Connect(function(c)
+    if c.Name == "ViewModels" then onViewModels(c) end
+end)
 
 task.spawn(function()
     while task.wait(2) do
         if not ScreenGui.Parent then break end
-        local vm=workspace:FindFirstChild("ViewModels");local fp=vm and vm:FindFirstChild("FirstPerson")
-        FirstPerson=fp
+        local vm = workspace:FindFirstChild("ViewModels")
+        local fp = vm and vm:FindFirstChild("FirstPerson")
+        FirstPerson = fp
         if fp then
-            if fp~=hookedFP then onFirstPerson(fp) end;SkinEngine.refreshAll()
-            local n=0;for _,c in ipairs(fp:GetChildren()) do if c:IsA("Model") and c.Name:find(PlayerName,1,true) then n+=1 end end
-            StatusBadge.Text=n>0 and ("● In match") or "● In match"
-            StatusBadge.TextColor3=n>0 and T.GREEN or T.YELLOW
-        else
-            local q=0;for _ in pairs(State.pendingApply) do q+=1 end
-            StatusBadge.Text=q>0 and ("● Lobby  "..q.." active") or "● Lobby"
-            StatusBadge.TextColor3=q>0 and T.ACCENT or T.SEC
+            if fp ~= hookedFP then onFirstPerson(fp) end
+            refreshAllVisual()
         end
     end
 end)
 
--- ─── KEYBIND LISTENER ────────────────────────────────────────────────────────
-UserInputService.InputBegan:Connect(function(i,gpe)
-    if gpe or State.rebinding then return end
-    if i.KeyCode==State.keybind then ScreenGui.Enabled=not ScreenGui.Enabled end
-end)
+-- Restore saved skins on load
+for weaponType, skinName in pairs(EquippedSkins) do
+    if skinName and skinName ~= "Default" then
+        if not useHook(skinName) or NEEDS_VISUAL_OVERRIDE[skinName] then
+            hookVisualForWeapon(weaponType, skinName)
+        end
+    end
+end
 
--- ─── INIT ────────────────────────────────────────────────────────────────────
-NavMgr.go("Home");updateToggle();buildWeaponList()
-local total=0;for _,s in pairs(WeaponSkins) do total+=#s end
-print(string.format("[Rivals Skin Changer V1 Beta] %d weapons, %d skins | Keybind: %s | Saved skins: %d",
-    #WeaponList,total,tostring(State.keybind.Name),(function() local n=0;for _ in pairs(State.pendingApply) do n+=1 end;return n end)()))
+-- ─── INIT ─────────────────────────────────────────────────────────────────────
+buildWeaponList()
+rebuildSummary()
+
+local total  = 0; for _, s in pairs(SkinLists) do total += #s end
+local active = 0; for _, s in pairs(EquippedSkins) do if s and s ~= "Default" then active += 1 end end
+if active > 0 then StatusBadge.Text = "● " .. active .. " active"; StatusBadge.TextColor3 = T.GREEN end
+
+print(string.format(
+    "[Rivals SC V3 Fixed] %d weapons · %d skins · Active: %d · Keybind: %s",
+    #WeaponList, total, active, tostring(State.keybind.Name)
+))
