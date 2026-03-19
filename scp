@@ -8,7 +8,7 @@ local PlayerGui         = LocalPlayer:WaitForChild("PlayerGui")
 local PlayerScripts     = LocalPlayer:WaitForChild("PlayerScripts", 15)
 local PlayerName        = LocalPlayer.Name
 
--- ─── PERSISTENCE ──────────────────────────────────────────────────────────────
+-- PERSISTENCE
 local SAVE_FILE = "rivals_sc_v4.json"
 
 local function saveData(equippedSkins, keybind)
@@ -30,7 +30,7 @@ local function loadData()
     return data.skins or {}, kb
 end
 
--- ─── STATE ────────────────────────────────────────────────────────────────────
+-- STATE 
 local EquippedSkins = {}
 local savedSkins, savedKeybind = loadData()
 for w, s in pairs(savedSkins) do EquippedSkins[w] = s end
@@ -40,7 +40,7 @@ local State = {
     rebinding = false,
 }
 
--- ─── SKIN LISTS ───────────────────────────────────────────────────────────────
+-- SKIN LISTS
 local SkinLists = {
     ["Assault Rifle"]     = {"Default","AK-47","AUG","Tommy Gun","Boneclaw Rifle","Gingerbread AUG","AKEY-47","10B Visits","Phoenix Rifle","Glorious Assault Rifle"},
     ["Bow"]               = {"Default","Compound Bow","Raven Bow","Dream Bow","Bat Bow","Frostbite Bow","Beloved Bow","Balloon Bow","Key Bow","Glorious Bow"},
@@ -94,14 +94,13 @@ local WeaponList = {}
 for w in pairs(SkinLists) do table.insert(WeaponList, w) end
 table.sort(WeaponList, function(a, b) return a:lower() < b:lower() end)
 
--- ─── MODULE REFERENCES ────────────────────────────────────────────────────────
--- ─── MODULE REFERENCES ────────────────────────────────────────────────────────
+-- MODULE REFERENCES
 local CosmeticLibrary, ItemLibrary, ReplicatedClass
 local ClientItem, ClientViewModelModule, EnumLibrary
 local _constructingWeapon = nil
 local _hooksApplied = false
 
--- ─── COSMETIC DATA BUILDER ────────────────────────────────────────────────────
+-- COSMETIC DATA BUILDER
 local _cosmeticCache = {}
 local _cosmeticLookup = nil -- lazy-built lowercase name → key map
 
@@ -269,7 +268,7 @@ task.spawn(function()
         .. " EL=" .. tostring(EnumLibrary ~= nil))
 end)
 
--- ─── THUMBNAIL ────────────────────────────────────────────────────────────────
+-- THUMBNAIL
 local _thumbCache = {}
 local function getThumbnail(name)
     if _thumbCache[name] ~= nil then return _thumbCache[name] end
@@ -287,7 +286,7 @@ local function getThumbnail(name)
     return img
 end
 
--- ─── APPLY / REVERT ───────────────────────────────────────────────────────────
+-- APPLY-REVERT
 local function applyEquippedSkin(weaponType, skinName)
     if skinName == "Default" or skinName == nil then
         EquippedSkins[weaponType] = nil
@@ -300,7 +299,7 @@ local function applyEquippedSkin(weaponType, skinName)
 end
 
 
--- ─── STYLES ───────────────────────────────────────────────────────────────────
+-- STYLES
 local STYLES = {
     Default = {
         BG=Color3.fromRGB(14,14,18), PANEL=Color3.fromRGB(20,20,26),
@@ -374,7 +373,7 @@ end
 local function corner(p,r) inst("UICorner",{CornerRadius=UDim.new(0,r or 6)},p) end
 local function stroke(p,c,t) return inst("UIStroke",{Color=c or T.BORDER,Thickness=t or 1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},p) end
 
--- ─── RARITY COLORS ────────────────────────────────────────────────────────────
+-- RARITY COLORS
 local RARITY_COLORS = {
     Common=Color3.fromRGB(148,148,156), Uncommon=Color3.fromRGB(68,188,108),
     Rare=Color3.fromRGB(68,128,255), Epic=Color3.fromRGB(148,68,255),
@@ -400,12 +399,12 @@ local function applyStyle(name)
     saveData(EquippedSkins,State.keybind)
 end
 
--- ─── CLEANUP ──────────────────────────────────────────────────────────────────
+-- CLEANUP
 for _,n in ipairs({"RivalsSkinChangerV3","RivalsSkinChangerV4","RivalsScV3","RivalsScV4","AnihaSkinChanger","RivalsScV1"}) do
     local g=PlayerGui:FindFirstChild(n); if g then g:Destroy() end
 end
 
--- ─── ROOT ─────────────────────────────────────────────────────────────────────
+-- ROOT
 local ScreenGui=inst("ScreenGui",{Name="RivalsScV1",ResetOnSpawn=false,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=true},PlayerGui)
 
@@ -417,7 +416,7 @@ local RootStroke=stroke(Root,T.BORDER,1)
 track(Root,"BackgroundColor3","BG")
 track(RootStroke,"Color","BORDER")
 
--- ─── TITLE BAR ────────────────────────────────────────────────────────────────
+-- TITLE BAR
 local TB=inst("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=T.PANEL,BorderSizePixel=0},Root)
 corner(TB,8); track(TB,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.LINE,BorderSizePixel=0},TB)
@@ -466,7 +465,7 @@ do
     end)
 end
 
--- ─── TAB BAR ──────────────────────────────────────────────────────────────────
+-- TAB BAR
 local TabBar=inst("Frame",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,36),
     BackgroundColor3=T.PANEL,BorderSizePixel=0},Root)
 track(TabBar,"BackgroundColor3","PANEL")
@@ -490,7 +489,7 @@ end
 local HomeTab,homeUL=makeTab("Home",8,true)
 local SettingsTab,_=makeTab("Settings",94,false)
 
--- ─── PAGES ────────────────────────────────────────────────────────────────────
+-- ─── PAGES 
 local BODY_Y=66; local BODY_H=490-BODY_Y
 
 local HomePage=inst("Frame",{Size=UDim2.new(1,0,0,BODY_H),Position=UDim2.new(0,0,0,BODY_Y),
@@ -507,7 +506,7 @@ end
 HomeTab.MouseButton1Click:Connect(function() switchTab("home") end)
 SettingsTab.MouseButton1Click:Connect(function() switchTab("settings") end)
 
--- ─── HOME: LEFT PANEL ─────────────────────────────────────────────────────────
+-- HOME-LEFT
 local LEFT_W=162; local RIGHT_W=198
 
 local LP=inst("Frame",{Size=UDim2.new(0,LEFT_W,1,0),BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
@@ -533,7 +532,7 @@ local WList=inst("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1,Autom
 inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,1)},WList)
 inst("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)},WList)
 
--- ─── HOME: MID PANEL ──────────────────────────────────────────────────────────
+-- HOME-MID
 local MP=inst("Frame",{Size=UDim2.new(1,-LEFT_W-RIGHT_W,1,0),Position=UDim2.new(0,LEFT_W,0,0),
     BackgroundColor3=T.BG,BorderSizePixel=0},HomePage)
 track(MP,"BackgroundColor3","BG")
@@ -558,7 +557,7 @@ SGL:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 local SkinGridLayout = SGL
 
--- ─── HOME: RIGHT PANEL ────────────────────────────────────────────────────────
+-- HOME-RIGHT
 local RP=inst("Frame",{Size=UDim2.new(0,RIGHT_W,1,0),Position=UDim2.new(1,-RIGHT_W,0,0),
     BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
 track(RP,"BackgroundColor3","PANEL")
@@ -626,7 +625,7 @@ local SummaryScroll=inst("ScrollingFrame",{
     ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},RP)
 inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)},SummaryScroll)
 
--- ─── SETTINGS PAGE ────────────────────────────────────────────────────────────
+-- SETTINGS
 inst("UIPadding",{PaddingTop=UDim.new(0,20),PaddingLeft=UDim.new(0,22),
     PaddingRight=UDim.new(0,22),PaddingBottom=UDim.new(0,16)},SettingsPage)
 
@@ -716,7 +715,7 @@ DropBtn.MouseButton1Click:Connect(function()
     DropBtn.Text=CurrentStyle..(dropOpen and "  ^" or "  v")
 end)
 
--- ─── SELECTION STATE ──────────────────────────────────────────────────────────
+-- SELECTION STATE
 local SelectedWeapon = nil
 local SelectedSkin   = nil
 local SkinCards      = {}
@@ -918,7 +917,7 @@ local function buildWeaponList(filter)
 end
 WSearch:GetPropertyChangedSignal("Text"):Connect(function() buildWeaponList(WSearch.Text) end)
 
--- ─── BUTTON HANDLERS ──────────────────────────────────────────────────────────
+-- BUTTON HANDLERS
 EquipBtn.MouseButton1Click:Connect(function()
     if not SelectedWeapon or not SelectedSkin then return end
     applyEquippedSkin(SelectedWeapon, SelectedSkin)
@@ -970,7 +969,7 @@ UserInputService.InputBegan:Connect(function(i, gpe)
     if i.KeyCode == State.keybind then ScreenGui.Enabled = not ScreenGui.Enabled end
 end)
 
--- ─── INIT ─────────────────────────────────────────────────────────────────────
+-- INIT
 buildWeaponList()
 rebuildSummary()
 
