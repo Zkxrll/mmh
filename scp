@@ -193,14 +193,12 @@ local function _applyHooks()
                         local nk = self:ToEnum("Name")
                         if viewmodelRef[dk] then
                             viewmodelRef[dk][sk] = cosData
-                            if nk and not SKIP_RC_NAME[skinName] then
+                            if nk then
                                 viewmodelRef[dk][nk] = skinName
                             end
                         elseif viewmodelRef.Data then
                             viewmodelRef.Data.Skin = cosData
-                            if not SKIP_RC_NAME[skinName] then
-                                viewmodelRef.Data.Name = skinName
-                            end
+                            viewmodelRef.Data.Name = skinName
                         end
                     end)
                 end
@@ -249,7 +247,7 @@ local function _applyHooks()
                         if cosData then
                             replicatedData[RC_DATA][RC_SKIN] = cosData
                             -- Only set RC_NAME for registered skins
-                            if not SKIP_RC_NAME[skinName] and cosData.Enum then
+                            if cosData.Enum then
                                 local RC_NAME = ReplicatedClass:ToEnum("Name")
                                 if RC_NAME then replicatedData[RC_DATA][RC_NAME] = skinName end
                             end
@@ -285,22 +283,25 @@ local function _applyHooks()
 end
 
 task.spawn(function()
-    -- Suppress AnalyticsPipelineController
-    task.spawn(function()
+    task.wait(2)
+    pcall(function()
         local ok, gc = pcall(getgc, true)
         if not ok or not gc then return end
-        local i = 0
+        local count = 0
         for _, fn in next, gc do
-            i += 1
-            if typeof(fn) == "function" then
-                local ok2, src = pcall(debug.info, fn, "s")
-                if ok2 and src and src:find("AnalyticsPipelineController") then
-                    pcall(hookfunction, fn, function() return task.wait(5) end)
-                end
+            count += 1
+            if count % 150 == 0 then task.wait() end
+            local ok2, src = pcall(debug.info, fn, "s")
+            if ok2 and src and src:find("AnalyticsPipelineController") then
+                pcall(hookfunction, fn, function() return task.wait(5) end)
+                break
             end
-            if i % 50 == 0 then task.wait() end
         end
     end)
+end)
+
+task.spawn(function()
+    local Mods = ReplicatedStorage:FindFirstChild("Modules")
 
     local Mods = ReplicatedStorage:FindFirstChild("Modules")
     if not Mods then return end
@@ -331,11 +332,11 @@ task.spawn(function()
 
     -- ── LOADOUT HOOKS (show skin + unlock all cosmetics in lobby UI) ──────────
     if DataController then
-        -- Make the game think we own every cosmetic
         local _origGet = DataController.Get
+        local _inventoryProxy = setmetatable({}, {__index = function() return true end})
         DataController.Get = function(self, key)
             if key == "CosmeticInventory" then
-                return setmetatable({}, {__index = function() return true end})
+                return _inventoryProxy
             end
             return _origGet(self, key)
         end
