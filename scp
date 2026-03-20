@@ -326,10 +326,6 @@ task.spawn(function()
         end
     end)
 
-    if EnumLibrary and EnumLibrary.WaitForEnumBuilder then
-        task.spawn(function() pcall(function() EnumLibrary:WaitForEnumBuilder() end) end)
-    end
-
     -- ── LOADOUT HOOKS (show skin + unlock all cosmetics in lobby UI) ──────────
     if DataController then
         local _origGet = DataController.Get
