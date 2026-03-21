@@ -1,3 +1,48 @@
+-- ══════════════════════════════════════════════════════════════
+--  ANTI-DETECTION / GC PROTECTION  (runs first, before anything)
+-- ══════════════════════════════════════════════════════════════
+
+local oldtable; oldtable = hookfunction(getrenv().setmetatable, newcclosure(function(Table, Metatable)
+    if Metatable and typeof(Metatable) == "table" and rawget(Metatable, "__mode") == "kv" then
+        local trace = debug.traceback()
+        if trace:find("LocalScript3") or trace:find("MiscellaneousController") then
+            return oldtable({1, 2, 3}, {})
+        end
+    end
+    return oldtable(Table, Metatable)
+end))
+
+local oldgc = getgc; getgc = function(...)
+    local gc = oldgc(...)
+    local filtered = {}
+    for _, v in ipairs(gc) do
+        if typeof(v) == "function" then
+            local src = debug.info(v, "s")
+            if not (src and (src:find("LocalScript3") or src:find("MiscellaneousController"))) then
+                table.insert(filtered, v)
+            end
+        else
+            table.insert(filtered, v)
+        end
+    end
+    return filtered
+end
+
+for _, v in getgc() do
+    if typeof(v) == "function" then
+        local src = debug.info(v, "s")
+        if src and (src:find("LocalScript3") or src:find("MiscellaneousController")) then
+            hookfunction(v, newcclosure(function()
+                return task.wait(9e9)
+            end))
+        end
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  RIVALS SKIN CHANGER  v1.1
+-- ══════════════════════════════════════════════════════════════
+
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
@@ -133,8 +178,6 @@ local function buildCosmeticData(skinName)
         or (_cosmeticLookup and _cosmeticLookup[skinName:lower()])
     local base = key and CosmeticLibrary.Cosmetics[key]
     if not base then return nil end
-    -- Flat safe table only — full copies break weapon-specific inits (e.g. BaseRevolver
-    -- ReloadBullets WaitForChild) causing camera lock and loadout corruption.
     local data = {
         Name                = skinName,
         Type                = "Skin",
@@ -210,7 +253,6 @@ local function _applyHooks()
     end
 
     if ClientViewModelModule then
-        -- Hook GetWrap — returns our wrap override if one is equipped
         if ClientViewModelModule.GetWrap then
             local _origGetWrap = ClientViewModelModule.GetWrap
             ClientViewModelModule.GetWrap = function(self)
@@ -240,13 +282,11 @@ local function _applyHooks()
                     if not RC_DATA or not RC_SKIN then return end
                     replicatedData[RC_DATA] = replicatedData[RC_DATA] or {}
 
-                    -- Inject skin
                     local skinName = EquippedSkins[wName]
                     if skinName and skinName ~= "Default" then
                         local cosData = buildCosmeticData(skinName)
                         if cosData then
                             replicatedData[RC_DATA][RC_SKIN] = cosData
-                            -- Only set RC_NAME for registered skins
                             if cosData.Enum then
                                 local RC_NAME = ReplicatedClass:ToEnum("Name")
                                 if RC_NAME then replicatedData[RC_DATA][RC_NAME] = skinName end
@@ -254,7 +294,6 @@ local function _applyHooks()
                         end
                     end
 
-                    -- Inject wrap
                     local wrapName = EquippedSkins[wName.."_wrap"]
                     if wrapName then
                         local wrapData = buildCosmeticData(wrapName)
@@ -282,23 +321,8 @@ local function _applyHooks()
     print("[Rivals SC v1.1] Hooks applied")
 end
 
-task.spawn(function()
-    task.wait(2)
-    pcall(function()
-        local ok, gc = pcall(getgc, true)
-        if not ok or not gc then return end
-        local count = 0
-        for _, fn in next, gc do
-            count += 1
-            if count % 150 == 0 then task.wait() end
-            local ok2, src = pcall(debug.info, fn, "s")
-            if ok2 and src and src:find("AnalyticsPipelineController") then
-                pcall(hookfunction, fn, function() return task.wait(5) end)
-                break
-            end
-        end
-    end)
-end)
+-- NOTE: The analytics pipeline hook is now handled by the broader GC protection
+-- at the top of the script, so the separate task.spawn for it is removed.
 
 task.spawn(function()
     local Mods = ReplicatedStorage:FindFirstChild("Modules")
@@ -326,7 +350,7 @@ task.spawn(function()
         end
     end)
 
-    -- ── LOADOUT HOOKS (show skin + unlock all cosmetics in lobby UI) ──────────
+    -- ── LOADOUT HOOKS ──────────────────────────────────────────────────────────
     if DataController then
         local _origGet = DataController.Get
         local _inventoryProxy = setmetatable({}, {__index = function() return true end})
@@ -337,7 +361,6 @@ task.spawn(function()
             return _origGet(self, key)
         end
 
-        -- Inject our equipped skin/wrap into GetWeaponData so loadout shows them
         local _origGetWeaponData = DataController.GetWeaponData
         DataController.GetWeaponData = function(self, weaponName)
             local data = _origGetWeaponData(self, weaponName)
@@ -356,7 +379,6 @@ task.spawn(function()
         end
     end
 
-    -- Show skin thumbnail in loadout weapon card
     if ItemLibrary and ItemLibrary.GetViewModelImageFromWeaponData then
         local _origImg = ItemLibrary.GetViewModelImageFromWeaponData
         ItemLibrary.GetViewModelImageFromWeaponData = function(self, weaponData, highRes)
@@ -378,7 +400,6 @@ task.spawn(function()
         end
     end
 
-    -- Intercept EquipCosmetic remote so selecting wrap/skin in the UI saves it
     task.spawn(function()
         task.wait(1)
         if not hookmetamethod then return end
@@ -396,7 +417,6 @@ task.spawn(function()
             if not weaponName or not cosmeticType then return oldNC(self, ...) end
 
             if cosmeticType == "Skin" then
-                -- Update our skin override and save
                 if not cosmeticName or cosmeticName == "None" or cosmeticName == "" then
                     EquippedSkins[weaponName] = nil
                 else
@@ -404,14 +424,12 @@ task.spawn(function()
                     _cosmeticCache[cosmeticName] = nil
                 end
                 saveData(EquippedSkins, State.keybind)
-                -- Refresh GUI if open
                 if SelectedWeapon == weaponName then
                     buildSkinGrid(weaponName)
                 end
                 buildWeaponList("")
                 rebuildSummary()
             elseif cosmeticType == "Wrap" then
-                -- Update wrap override and save
                 if not cosmeticName or cosmeticName == "None" or cosmeticName == "" then
                     EquippedSkins[weaponName.."_wrap"] = nil
                 else
@@ -420,12 +438,10 @@ task.spawn(function()
                 end
                 saveData(EquippedSkins, State.keybind)
             end
-            -- Block the remote so server doesn't know we don't own it
             return
         end)
     end)
 
-    -- ViewProfile hook so loadout shows skin when viewing own profile
     pcall(function()
         local ViewProfile = require(PSMods.Pages.ViewProfile)
         if ViewProfile and ViewProfile.Fetch then
@@ -469,7 +485,7 @@ local function applyEquippedSkin(weaponType, skinName)
         EquippedSkins[weaponType] = nil
     else
         EquippedSkins[weaponType] = skinName
-        _cosmeticCache[skinName] = nil -- fresh Seed on next build
+        _cosmeticCache[skinName] = nil
     end
     saveData(EquippedSkins, State.keybind)
 end
@@ -579,13 +595,10 @@ for _,n in ipairs({"RivalsSkinChangerV3","RivalsSkinChangerV4","RivalsScV3","Riv
 end
 
 -- RESPONSIVE SIZING
--- Detect screen size and scale UI to fit mobile screens
 local camera = workspace.CurrentCamera
 local screenSize = camera.ViewportSize
 local isMobileDevice = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
--- On mobile: fill ~95% of screen width, keep aspect ratio
--- On PC: fixed 740×490
 local GUI_W, GUI_H, LEFT_W, RIGHT_W, BODY_Y, BODY_H
 if isMobileDevice then
     GUI_W  = math.min(math.floor(screenSize.X * 0.96), 500)
@@ -658,7 +671,6 @@ do
         Root.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)
     end
     local function endDrag() drag=false end
-    -- Mouse
     TB.InputBegan:Connect(function(i)
         if i.UserInputType==Enum.UserInputType.MouseButton1 then startDrag(i.Position) end
     end)
@@ -668,7 +680,6 @@ do
     UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType==Enum.UserInputType.MouseButton1 then endDrag() end
     end)
-    -- Touch — use GuiObject.TouchPan to consume the gesture before camera sees it
     TB.TouchPan:Connect(function(_, totalTranslation, _, state)
         if state==Enum.UserInputState.Begin then
             sp=Root.Position; ds=Vector2.new(0,0)
@@ -719,7 +730,6 @@ HomeTab.MouseButton1Click:Connect(function() switchTab("home") end)
 SettingsTab.MouseButton1Click:Connect(function() switchTab("settings") end)
 
 -- HOME LEFT
-
 local LP=inst("Frame",{Size=UDim2.new(0,LEFT_W,1,0),BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
 track(LP,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=T.LINE,BorderSizePixel=0},LP)
@@ -1142,10 +1152,7 @@ UserInputService.InputBegan:Connect(function(i,gpe)
     if i.KeyCode==State.keybind then ScreenGui.Enabled=not ScreenGui.Enabled end
 end)
 
--- TOGGLE BUTTON (visible on both PC and mobile, always on top)
--- Small, semi-transparent, draggable pill button
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
+-- TOGGLE BUTTON
 local ToggleGui = inst("ScreenGui",{
     Name="RivalsScToggle", ResetOnSpawn=false,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
@@ -1165,14 +1172,12 @@ local ToggleBtn = inst("TextButton",{
     ZIndex      = 10,
 },ToggleGui)
 corner(ToggleBtn, 11)
--- Subtle border
-local tbStroke = inst("UIStroke",{
+inst("UIStroke",{
     Color=Color3.fromRGB(80,100,220), Thickness=1,
     Transparency=0.5,
     ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
 },ToggleBtn)
 
--- Drag logic — only fires when input starts ON the button
 do
     local td, tds, tsp = false, nil, nil
     local moved = false
@@ -1195,7 +1200,6 @@ do
         if i.UserInputType==Enum.UserInputType.MouseButton1
         or i.UserInputType==Enum.UserInputType.Touch then
             td=true; tds=i.Position; tsp=ToggleBtn.Position; moved=false
-            -- Track move/end only for this specific input
             local mc, ec
             mc = UserInputService.InputChanged:Connect(function(i2)
                 if i2.UserInputType==Enum.UserInputType.MouseMovement
