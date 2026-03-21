@@ -642,7 +642,7 @@ local subLabel=inst("TextLabel",{Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,
     TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},TB)
 track(subLabel,"TextColor3","SEC")
 
-local StatusBadge=inst("TextLabel",{Size=UDim2.new(0,108,0,20),Position=UDim2.new(1,-140,0.5,-10),
+local StatusBadge=inst("TextLabel",{Size=UDim2.new(0,90,0,20),Position=UDim2.new(1,-220,0.5,-10),
     BackgroundColor3=T.CARD,Text="Ready",Font=Enum.Font.GothamSemibold,TextSize=9,
     TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Center,BorderSizePixel=0},TB)
 corner(StatusBadge,10); track(StatusBadge,"BackgroundColor3","CARD"); track(StatusBadge,"TextColor3","SEC")
@@ -653,6 +653,22 @@ local CloseBtn=inst("TextButton",{Size=UDim2.new(0,24,0,24),Position=UDim2.new(1
     TextColor3=T.SEC,BorderSizePixel=0},TB)
 corner(CloseBtn,6); track(CloseBtn,"BackgroundColor3","CARD")
 CloseBtn.MouseButton1Click:Connect(function() ScreenGui.Enabled=false end)
+local DiscordBtn=inst("TextButton",{Size=UDim2.new(0,90,0,20),Position=UDim2.new(1,-125,0.5,-10),
+    BackgroundColor3=Color3.fromRGB(88,101,242),Text="Join Discord",Font=Enum.Font.GothamBold,TextSize=9,
+    TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},TB)
+corner(DiscordBtn,10)
+inst("UIStroke",{Color=Color3.fromRGB(60,72,200),Thickness=1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},DiscordBtn)
+DiscordBtn.MouseEnter:Connect(function() tw(DiscordBtn,{BackgroundColor3=Color3.fromRGB(110,125,255)}) end)
+DiscordBtn.MouseLeave:Connect(function() tw(DiscordBtn,{BackgroundColor3=Color3.fromRGB(88,101,242)}) end)
+DiscordBtn.MouseButton1Click:Connect(function()
+    pcall(function() setclipboard("https://discord.gg/bxu2WMjNjN") end)
+    task.delay(1.8,function()
+        DiscordBtn.Text="Join Discord"
+        tw(DiscordBtn,{BackgroundColor3=Color3.fromRGB(88,101,242)})
+    end)
+    StatusBadge.Text="Link copied!"; StatusBadge.TextColor3=T.ACCENT
+    task.delay(2,function() StatusBadge.Text="Ready"; StatusBadge.TextColor3=T.SEC end)
+end)
 CloseBtn.MouseEnter:Connect(function() tw(CloseBtn,{BackgroundColor3=T.RED,TextColor3=Color3.fromRGB(255,255,255)}) end)
 CloseBtn.MouseLeave:Connect(function() tw(CloseBtn,{BackgroundColor3=T.CARD,TextColor3=T.SEC}) end)
 
