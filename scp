@@ -1,46 +1,5 @@
 -- ══════════════════════════════════════════════════════════════
---  ANTI-DETECTION / GC PROTECTION  (runs first, before anything)
--- ══════════════════════════════════════════════════════════════
-
-local oldtable; oldtable = hookfunction(getrenv().setmetatable, newcclosure(function(Table, Metatable)
-    if Metatable and typeof(Metatable) == "table" and rawget(Metatable, "__mode") == "kv" then
-        local trace = debug.traceback()
-        if trace:find("LocalScript3") or trace:find("MiscellaneousController") then
-            return oldtable({1, 2, 3}, {})
-        end
-    end
-    return oldtable(Table, Metatable)
-end))
-
-local oldgc = getgc; getgc = function(...)
-    local gc = oldgc(...)
-    local filtered = {}
-    for _, v in ipairs(gc) do
-        if typeof(v) == "function" then
-            local src = debug.info(v, "s")
-            if not (src and (src:find("LocalScript3") or src:find("MiscellaneousController"))) then
-                table.insert(filtered, v)
-            end
-        else
-            table.insert(filtered, v)
-        end
-    end
-    return filtered
-end
-
-for _, v in getgc() do
-    if typeof(v) == "function" then
-        local src = debug.info(v, "s")
-        if src and (src:find("LocalScript3") or src:find("MiscellaneousController")) then
-            hookfunction(v, newcclosure(function()
-                return task.wait(9e9)
-            end))
-        end
-    end
-end
-
--- ══════════════════════════════════════════════════════════════
---  RIVALS SKIN CHANGER  v1.1
+--  RIVALS SKIN CHANGER  v1.1  (wrap fix)
 -- ══════════════════════════════════════════════════════════════
 
 local Players           = game:GetService("Players")
@@ -84,6 +43,11 @@ local State = {
     keybind   = savedKeybind or Enum.KeyCode.RightAlt,
     rebinding = false,
 }
+
+-- Lobby cosmetics captured via hookmetamethod on EquipCosmetic remote.
+-- Keyed as lobbyCosmetics[weaponName][cosmeticType] = cosmeticData table.
+-- This mirrors how the reference script stores equipped[weapon].Wrap etc.
+local lobbyCosmetics = {}
 
 -- SKIN LISTS
 local SkinLists = {
@@ -146,16 +110,6 @@ local _constructingWeapon = nil
 local _hooksApplied = false
 local _viewingProfile = nil
 
--- Skins whose RC_NAME must NOT be set — setting it causes weapon to vanish from loadout
-local SKIP_RC_NAME = {
-    ["Desert Eagle"]=true, ["Keyvolver"]=true,
-    ["Paper Planes"]=true, ["Crystal Daggers"]=true, ["Keynais"]=true,
-    ["Key Bow"]=true, ["Balloon Bow"]=true, ["Beloved Bow"]=true,
-    ["Harpoon Crossbow"]=true, ["Violin Crossbow"]=true, ["Crossbone"]=true,
-    ["Bat Bow"]=true, ["Frostbite Bow"]=true, ["Raven Bow"]=true,
-    ["Dream Bow"]=true, ["Arch Crossbow"]=true,
-}
-
 -- COSMETIC DATA BUILDER
 local _cosmeticCache = {}
 local _cosmeticLookup = nil
@@ -199,6 +153,26 @@ local function buildCosmeticData(skinName)
     return data
 end
 
+-- Clone a cosmetic entry the same way the reference script does —
+-- copies all fields from CosmeticLibrary, adds Name/Type/Seed/Enum.
+local function cloneCosmetic(name, cosmeticType)
+    if not CosmeticLibrary or not CosmeticLibrary.Cosmetics then return nil end
+    local base = CosmeticLibrary.Cosmetics[name]
+    if not base then return nil end
+    local data = {}
+    for k, v in pairs(base) do data[k] = v end
+    data.Name = name
+    data.Type = data.Type or cosmeticType
+    data.Seed = math.random(1, 1000000)
+    if EnumLibrary then
+        pcall(function()
+            local enumId = EnumLibrary:ToEnum(name)
+            if enumId then data.Enum = enumId; data.ObjectID = enumId end
+        end)
+    end
+    return data
+end
+
 local function _applyHooks()
     if _hooksApplied then return end
     _hooksApplied = true
@@ -236,9 +210,7 @@ local function _applyHooks()
                         local nk = self:ToEnum("Name")
                         if viewmodelRef[dk] then
                             viewmodelRef[dk][sk] = cosData
-                            if nk then
-                                viewmodelRef[dk][nk] = skinName
-                            end
+                            if nk then viewmodelRef[dk][nk] = skinName end
                         elseif viewmodelRef.Data then
                             viewmodelRef.Data.Skin = cosData
                             viewmodelRef.Data.Name = skinName
@@ -253,6 +225,9 @@ local function _applyHooks()
     end
 
     if ClientViewModelModule then
+        -- GetWrap: returns SC custom wrap if set, otherwise falls through to
+        -- the original (which reads from the viewmodel's replicated data,
+        -- already populated correctly by GetWeaponData / ClientViewModel.new).
         if ClientViewModelModule.GetWrap then
             local _origGetWrap = ClientViewModelModule.GetWrap
             ClientViewModelModule.GetWrap = function(self)
@@ -260,11 +235,15 @@ local function _applyHooks()
                 local weaponPlayer = self.ClientItem and self.ClientItem.ClientFighter
                                      and self.ClientItem.ClientFighter.Player
                 if weaponName and weaponPlayer == LocalPlayer then
+                    -- SC custom wrap override (set via _wrap key)
                     local wrapName = EquippedSkins[weaponName.."_wrap"]
                     if wrapName then
                         local wrapData = buildCosmeticData(wrapName)
                         if wrapData then return wrapData end
                     end
+                    -- Lobby wrap captured from EquipCosmetic remote
+                    local lc = lobbyCosmetics[weaponName]
+                    if lc and lc.Wrap then return lc.Wrap end
                 end
                 return _origGetWrap(self)
             end
@@ -280,26 +259,39 @@ local function _applyHooks()
                     local RC_DATA = ReplicatedClass:ToEnum("Data")
                     local RC_SKIN = ReplicatedClass:ToEnum("Skin")
                     if not RC_DATA or not RC_SKIN then return end
-                    replicatedData[RC_DATA] = replicatedData[RC_DATA] or {}
 
-                    local skinName = EquippedSkins[wName]
-                    if skinName and skinName ~= "Default" then
-                        local cosData = buildCosmeticData(skinName)
-                        if cosData then
-                            replicatedData[RC_DATA][RC_SKIN] = cosData
-                            if cosData.Enum then
-                                local RC_NAME = ReplicatedClass:ToEnum("Name")
-                                if RC_NAME then replicatedData[RC_DATA][RC_NAME] = skinName end
+                    local skinName  = EquippedSkins[wName]
+                    local wrapName  = EquippedSkins[wName.."_wrap"]
+                    -- Lobby wrap from hookmetamethod capture (plain table read, no function calls)
+                    local lobbyWrap = lobbyCosmetics[wName] and lobbyCosmetics[wName].Wrap
+
+                    local hasSkin = skinName and skinName ~= "Default"
+                    local hasWrap = wrapName or lobbyWrap
+
+                    if hasSkin or hasWrap then
+                        replicatedData[RC_DATA] = replicatedData[RC_DATA] or {}
+
+                        if hasSkin then
+                            local cosData = buildCosmeticData(skinName)
+                            if cosData then
+                                replicatedData[RC_DATA][RC_SKIN] = cosData
+                                if cosData.Enum then
+                                    local RC_NAME = ReplicatedClass:ToEnum("Name")
+                                    if RC_NAME then replicatedData[RC_DATA][RC_NAME] = skinName end
+                                end
                             end
                         end
-                    end
 
-                    local wrapName = EquippedSkins[wName.."_wrap"]
-                    if wrapName then
-                        local wrapData = buildCosmeticData(wrapName)
-                        local RC_WRAP  = ReplicatedClass:ToEnum("Wrap")
-                        if wrapData and RC_WRAP then
-                            replicatedData[RC_DATA][RC_WRAP] = wrapData
+                        local RC_WRAP = ReplicatedClass:ToEnum("Wrap")
+                        if RC_WRAP then
+                            if wrapName then
+                                -- SC custom wrap takes priority
+                                local wrapData = buildCosmeticData(wrapName)
+                                if wrapData then replicatedData[RC_DATA][RC_WRAP] = wrapData end
+                            elseif lobbyWrap then
+                                -- Lobby wrap captured from EquipCosmetic (plain table read)
+                                replicatedData[RC_DATA][RC_WRAP] = lobbyWrap
+                            end
                         end
                     end
                 end)
@@ -321,17 +313,62 @@ local function _applyHooks()
     print("[Rivals SC v1.1] Hooks applied")
 end
 
--- NOTE: The analytics pipeline hook is now handled by the broader GC protection
--- at the top of the script, so the separate task.spawn for it is removed.
+-- Hook the EquipCosmetic remote to capture lobby cosmetic equips.
+-- Mirrors the reference script's hookmetamethod approach exactly.
+-- We intercept FireServer calls on EquipCosmetic and store cloned
+-- cosmetic data in lobbyCosmetics[weapon][type] for later injection.
+task.spawn(function()
+    task.wait(1)
+    if not hookmetamethod then
+        print("[Rivals SC v1.1] hookmetamethod unavailable — lobby wraps won't be captured")
+        return
+    end
+    local Remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if not Remotes then return end
+    local DataRemotes = Remotes:FindFirstChild("Data")
+    local EquipRemote = DataRemotes and DataRemotes:FindFirstChild("EquipCosmetic")
+    if not EquipRemote then return end
+
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        if getnamecallmethod() ~= "FireServer" then
+            return oldNamecall(self, ...)
+        end
+        if self == EquipRemote then
+            local args = { ... }
+            local weaponName, cosmeticType, cosmeticName = args[1], args[2], args[3]
+            if weaponName and cosmeticType then
+                if not cosmeticName or cosmeticName == "None" or cosmeticName == "" then
+                    -- Unequip: clear the stored type for this weapon
+                    if lobbyCosmetics[weaponName] then
+                        lobbyCosmetics[weaponName][cosmeticType] = nil
+                        if not next(lobbyCosmetics[weaponName]) then
+                            lobbyCosmetics[weaponName] = nil
+                        end
+                    end
+                else
+                    -- Equip: clone and store
+                    local cloned = cloneCosmetic(cosmeticName, cosmeticType)
+                    if cloned then
+                        lobbyCosmetics[weaponName] = lobbyCosmetics[weaponName] or {}
+                        lobbyCosmetics[weaponName][cosmeticType] = cloned
+                    end
+                end
+            end
+            -- Let the original call through so the server still processes it
+            return oldNamecall(self, ...)
+        end
+        return oldNamecall(self, ...)
+    end)
+    print("[Rivals SC v1.1] EquipCosmetic hook active")
+end)
 
 task.spawn(function()
     local Mods = ReplicatedStorage:FindFirstChild("Modules")
-
-    local Mods = ReplicatedStorage:FindFirstChild("Modules")
     if not Mods then return end
-    local PSMods   = PlayerScripts:FindFirstChild("Modules")
+    local PSMods = PlayerScripts:FindFirstChild("Modules")
     if not PSMods then return end
-    local Ctrls    = PlayerScripts:FindFirstChild("Controllers")
+    local Ctrls  = PlayerScripts:FindFirstChild("Controllers")
 
     pcall(function() CosmeticLibrary = require(Mods.CosmeticLibrary) end)
     pcall(function() ItemLibrary     = require(Mods.ItemLibrary) end)
@@ -345,19 +382,14 @@ task.spawn(function()
             .ClientFighter.ClientItem.ClientViewModel)
     end)
     pcall(function()
-        if Ctrls then
-            DataController = require(Ctrls.PlayerDataController)
-        end
+        if Ctrls then DataController = require(Ctrls.PlayerDataController) end
     end)
 
-    -- ── LOADOUT HOOKS ──────────────────────────────────────────────────────────
     if DataController then
         local _origGet = DataController.Get
         local _inventoryProxy = setmetatable({}, {__index = function() return true end})
         DataController.Get = function(self, key)
-            if key == "CosmeticInventory" then
-                return _inventoryProxy
-            end
+            if key == "CosmeticInventory" then return _inventoryProxy end
             return _origGet(self, key)
         end
 
@@ -365,16 +397,29 @@ task.spawn(function()
         DataController.GetWeaponData = function(self, weaponName)
             local data = _origGetWeaponData(self, weaponName)
             if not data then return nil end
+
             local skinName = EquippedSkins[weaponName]
             if skinName and skinName ~= "Default" then
                 local cosData = buildCosmeticData(skinName)
                 if cosData then data.Skin = cosData end
             end
+
+            -- SC custom wrap takes priority; otherwise leave data.Wrap untouched
             local wrapName = EquippedSkins[weaponName.."_wrap"]
             if wrapName then
                 local wrapData = buildCosmeticData(wrapName)
                 if wrapData then data.Wrap = wrapData end
             end
+
+            -- Inject lobby wrap from hookmetamethod capture if present and no
+            -- custom wrap is overriding it
+            if not wrapName then
+                local lc = lobbyCosmetics[weaponName]
+                if lc and lc.Wrap then
+                    data.Wrap = lc.Wrap
+                end
+            end
+
             return data
         end
     end
@@ -399,48 +444,6 @@ task.spawn(function()
             return _origImg(self, weaponData, highRes)
         end
     end
-
-    task.spawn(function()
-        task.wait(1)
-        if not hookmetamethod then return end
-        local Remotes     = ReplicatedStorage:FindFirstChild("Remotes")
-        local DataRemotes = Remotes and Remotes:FindFirstChild("Data")
-        local EquipRemote = DataRemotes and DataRemotes:FindFirstChild("EquipCosmetic")
-        if not EquipRemote then return end
-
-        local oldNC
-        oldNC = hookmetamethod(game, "__namecall", function(self, ...)
-            if getnamecallmethod() ~= "FireServer" then return oldNC(self, ...) end
-            if self ~= EquipRemote then return oldNC(self, ...) end
-            local args = {...}
-            local weaponName, cosmeticType, cosmeticName = args[1], args[2], args[3]
-            if not weaponName or not cosmeticType then return oldNC(self, ...) end
-
-            if cosmeticType == "Skin" then
-                if not cosmeticName or cosmeticName == "None" or cosmeticName == "" then
-                    EquippedSkins[weaponName] = nil
-                else
-                    EquippedSkins[weaponName] = cosmeticName
-                    _cosmeticCache[cosmeticName] = nil
-                end
-                saveData(EquippedSkins, State.keybind)
-                if SelectedWeapon == weaponName then
-                    buildSkinGrid(weaponName)
-                end
-                buildWeaponList("")
-                rebuildSummary()
-            elseif cosmeticType == "Wrap" then
-                if not cosmeticName or cosmeticName == "None" or cosmeticName == "" then
-                    EquippedSkins[weaponName.."_wrap"] = nil
-                else
-                    EquippedSkins[weaponName.."_wrap"] = cosmeticName
-                    _cosmeticCache[cosmeticName] = nil
-                end
-                saveData(EquippedSkins, State.keybind)
-            end
-            return
-        end)
-    end)
 
     pcall(function()
         local ViewProfile = require(PSMods.Pages.ViewProfile)
@@ -479,7 +482,6 @@ local function getThumbnail(name)
     return img
 end
 
--- APPLY-REVERT
 local function applyEquippedSkin(weaponType, skinName)
     if skinName == "Default" or skinName == nil then
         EquippedSkins[weaponType] = nil
@@ -564,7 +566,6 @@ end
 local function corner(p,r) inst("UICorner",{CornerRadius=UDim.new(0,r or 6)},p) end
 local function stroke(p,c,t) return inst("UIStroke",{Color=c or T.BORDER,Thickness=t or 1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},p) end
 
--- RARITY COLORS
 local RARITY_COLORS = {
     Common=Color3.fromRGB(148,148,156), Uncommon=Color3.fromRGB(68,188,108),
     Rare=Color3.fromRGB(68,128,255), Epic=Color3.fromRGB(148,68,255),
@@ -576,7 +577,6 @@ local function getRarityColor(skinName)
     return T.MUT
 end
 
--- Style tracking for live theme switching
 local _tracked = {}
 local function track(obj,prop,key) table.insert(_tracked,{o=obj,p=prop,k=key}) end
 
@@ -589,12 +589,10 @@ local function applyStyle(name)
     end
 end
 
--- CLEANUP
 for _,n in ipairs({"RivalsSkinChangerV3","RivalsSkinChangerV4","RivalsScV3","RivalsScV4","AnihaSkinChanger","RivalsScV1"}) do
     local g=PlayerGui:FindFirstChild(n); if g then g:Destroy() end
 end
 
--- RESPONSIVE SIZING
 local camera = workspace.CurrentCamera
 local screenSize = camera.ViewportSize
 local isMobileDevice = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
@@ -616,7 +614,6 @@ else
     BODY_H = GUI_H - BODY_Y
 end
 
--- ROOT
 local ScreenGui=inst("ScreenGui",{Name="RivalsScV1",ResetOnSpawn=false,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=true},PlayerGui)
 
@@ -626,10 +623,8 @@ local Root=inst("Frame",{
     BackgroundColor3=T.BG,BorderSizePixel=0,ClipsDescendants=true},ScreenGui)
 corner(Root,8)
 local RootStroke=stroke(Root,T.BORDER,1)
-track(Root,"BackgroundColor3","BG")
-track(RootStroke,"Color","BORDER")
+track(Root,"BackgroundColor3","BG"); track(RootStroke,"Color","BORDER")
 
--- TITLE BAR
 local TB=inst("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=T.PANEL,BorderSizePixel=0},Root)
 corner(TB,8); track(TB,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.LINE,BorderSizePixel=0},TB)
@@ -638,19 +633,18 @@ local accentBar=inst("Frame",{Size=UDim2.new(0,3,0,18),Position=UDim2.new(0,12,0
 corner(accentBar,2); track(accentBar,"BackgroundColor3","ACCENT")
 
 local titleLabel=inst("TextLabel",{Size=UDim2.new(0,130,1,0),Position=UDim2.new(0,22,0,0),
-    BackgroundTransparency=1,Text="Skin Changer",
-    Font=Enum.Font.GothamBold,TextSize=12,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},TB)
+    BackgroundTransparency=1,Text="Skin Changer",Font=Enum.Font.GothamBold,TextSize=12,
+    TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},TB)
 track(titleLabel,"TextColor3","PRI")
 
 local subLabel=inst("TextLabel",{Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,146,0,0),
-    BackgroundTransparency=1,Text="Rivals  ·  v1.1",
-    Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},TB)
+    BackgroundTransparency=1,Text="Rivals  ·  v1.1",Font=Enum.Font.Gotham,TextSize=10,
+    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},TB)
 track(subLabel,"TextColor3","SEC")
 
 local StatusBadge=inst("TextLabel",{Size=UDim2.new(0,108,0,20),Position=UDim2.new(1,-140,0.5,-10),
-    BackgroundColor3=T.CARD,Text="Ready",
-    Font=Enum.Font.GothamSemibold,TextSize=9,TextColor3=T.SEC,
-    TextXAlignment=Enum.TextXAlignment.Center,BorderSizePixel=0},TB)
+    BackgroundColor3=T.CARD,Text="Ready",Font=Enum.Font.GothamSemibold,TextSize=9,
+    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Center,BorderSizePixel=0},TB)
 corner(StatusBadge,10); track(StatusBadge,"BackgroundColor3","CARD"); track(StatusBadge,"TextColor3","SEC")
 local sbStroke=stroke(StatusBadge,T.BORDER,1); track(sbStroke,"Color","BORDER")
 
@@ -681,16 +675,11 @@ do
         if i.UserInputType==Enum.UserInputType.MouseButton1 then endDrag() end
     end)
     TB.TouchPan:Connect(function(_, totalTranslation, _, state)
-        if state==Enum.UserInputState.Begin then
-            sp=Root.Position; ds=Vector2.new(0,0)
-        end
-        Root.Position=UDim2.new(
-            sp.X.Scale, sp.X.Offset + totalTranslation.X,
-            sp.Y.Scale, sp.Y.Offset + totalTranslation.Y)
+        if state==Enum.UserInputState.Begin then sp=Root.Position; ds=Vector2.new(0,0) end
+        Root.Position=UDim2.new(sp.X.Scale,sp.X.Offset+totalTranslation.X,sp.Y.Scale,sp.Y.Offset+totalTranslation.Y)
     end)
 end
 
--- TAB BAR
 local TabBar=inst("Frame",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,36),
     BackgroundColor3=T.PANEL,BorderSizePixel=0},Root)
 track(TabBar,"BackgroundColor3","PANEL")
@@ -703,18 +692,16 @@ local function makeTab(label,xOff,active)
         Text=label,Font=Enum.Font.GothamSemibold,TextSize=10,
         TextColor3=active and T.PRI or T.SEC,BorderSizePixel=0},TabBar)
     corner(btn,5)
-    local ul=nil
     if active then
-        ul=inst("Frame",{Size=UDim2.new(0.55,0,0,2),Position=UDim2.new(0.225,0,1,-2),
+        local ul=inst("Frame",{Size=UDim2.new(0.55,0,0,2),Position=UDim2.new(0.225,0,1,-2),
             BackgroundColor3=T.ACCENT,BorderSizePixel=0},btn)
         corner(ul,1); track(ul,"BackgroundColor3","ACCENT")
     end
-    return btn,ul
+    return btn
 end
-local HomeTab,homeUL=makeTab("Home",8,true)
-local SettingsTab,_=makeTab("Settings",94,false)
+local HomeTab=makeTab("Home",8,true)
+local SettingsTab=makeTab("Settings",94,false)
 
--- PAGES
 local HomePage=inst("Frame",{Size=UDim2.new(1,0,0,BODY_H),Position=UDim2.new(0,0,0,BODY_Y),
     BackgroundTransparency=1,BorderSizePixel=0,Visible=true},Root)
 local SettingsPage=inst("Frame",{Size=UDim2.new(1,0,0,BODY_H),Position=UDim2.new(0,0,0,BODY_Y),
@@ -729,22 +716,17 @@ end
 HomeTab.MouseButton1Click:Connect(function() switchTab("home") end)
 SettingsTab.MouseButton1Click:Connect(function() switchTab("settings") end)
 
--- HOME LEFT
 local LP=inst("Frame",{Size=UDim2.new(0,LEFT_W,1,0),BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
 track(LP,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=T.LINE,BorderSizePixel=0},LP)
-
-local WSW=inst("Frame",{Size=UDim2.new(1,-14,0,26),Position=UDim2.new(0,7,0,8),
-    BackgroundColor3=T.CARD,BorderSizePixel=0},LP)
+local WSW=inst("Frame",{Size=UDim2.new(1,-14,0,26),Position=UDim2.new(0,7,0,8),BackgroundColor3=T.CARD,BorderSizePixel=0},LP)
 corner(WSW,6); track(WSW,"BackgroundColor3","CARD")
 local wsStroke=stroke(WSW,T.BORDER,1); track(wsStroke,"Color","BORDER")
-
 local WSearch=inst("TextBox",{Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,5,0,0),
     BackgroundTransparency=1,PlaceholderText="Search weapons...",PlaceholderColor3=T.MUT,
     Text="",Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.PRI,
     TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false},WSW)
 track(WSearch,"TextColor3","PRI"); track(WSearch,"PlaceholderColor3","MUT")
-
 local WScroll=inst("ScrollingFrame",{Size=UDim2.new(1,0,1,-42),Position=UDim2.new(0,0,0,42),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
     ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),
@@ -753,186 +735,110 @@ local WList=inst("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1,Autom
 inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,1)},WList)
 inst("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)},WList)
 
--- HOME MID
-local MP=inst("Frame",{Size=UDim2.new(1,-LEFT_W-RIGHT_W,1,0),Position=UDim2.new(0,LEFT_W,0,0),
-    BackgroundColor3=T.BG,BorderSizePixel=0},HomePage)
+local MP=inst("Frame",{Size=UDim2.new(1,-LEFT_W-RIGHT_W,1,0),Position=UDim2.new(0,LEFT_W,0,0),BackgroundColor3=T.BG,BorderSizePixel=0},HomePage)
 track(MP,"BackgroundColor3","BG")
 inst("Frame",{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=T.LINE,BorderSizePixel=0},MP)
-
 local MH=inst("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=T.PANEL,BorderSizePixel=0},MP)
 track(MH,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.LINE,BorderSizePixel=0},MH)
 local MidTitle=inst("TextLabel",{Size=UDim2.new(1,-12,1,0),Position=UDim2.new(0,12,0,0),
-    BackgroundTransparency=1,Text="Select a weapon",
-    Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},MH)
+    BackgroundTransparency=1,Text="Select a weapon",Font=Enum.Font.GothamSemibold,TextSize=10,
+    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},MH)
 track(MidTitle,"TextColor3","SEC")
-
 local SkinScroll=inst("ScrollingFrame",{Size=UDim2.new(1,0,1,-30),Position=UDim2.new(0,0,0,30),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
     ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0)},MP)
 local SkinGrid=inst("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1},SkinScroll)
-local CARD_W = isMobileDevice and 72 or 88
-local CARD_H = isMobileDevice and 90 or 110
+local CARD_W=isMobileDevice and 72 or 88
+local CARD_H=isMobileDevice and 90 or 110
 local SGL=inst("UIGridLayout",{CellSize=UDim2.new(0,CARD_W,0,CARD_H),CellPadding=UDim2.new(0,5,0,5),SortOrder=Enum.SortOrder.LayoutOrder},SkinGrid)
 inst("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)},SkinGrid)
 SGL:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     SkinScroll.CanvasSize=UDim2.new(0,0,0,SGL.AbsoluteContentSize.Y+16)
 end)
 
--- HOME RIGHT
-local RP=inst("Frame",{Size=UDim2.new(0,RIGHT_W,1,0),Position=UDim2.new(1,-RIGHT_W,0,0),
-    BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
+local RP=inst("Frame",{Size=UDim2.new(0,RIGHT_W,1,0),Position=UDim2.new(1,-RIGHT_W,0,0),BackgroundColor3=T.PANEL,BorderSizePixel=0},HomePage)
 track(RP,"BackgroundColor3","PANEL")
 inst("Frame",{Size=UDim2.new(0,1,1,0),BackgroundColor3=T.LINE,BorderSizePixel=0},RP)
-
 local M=10; local IW=RIGHT_W-M*2
-local PREV_H = isMobileDevice and 90 or 116
-
-local PrevWrap=inst("Frame",{Size=UDim2.new(0,IW,0,PREV_H),Position=UDim2.new(0,M,0,M),
-    BackgroundColor3=T.BG,BorderSizePixel=0},RP)
+local PREV_H=isMobileDevice and 90 or 116
+local PrevWrap=inst("Frame",{Size=UDim2.new(0,IW,0,PREV_H),Position=UDim2.new(0,M,0,M),BackgroundColor3=T.BG,BorderSizePixel=0},RP)
 corner(PrevWrap,6); track(PrevWrap,"BackgroundColor3","BG")
 local pwStroke=stroke(PrevWrap,T.BORDER,1); track(pwStroke,"Color","BORDER")
-
-local PreviewImg=inst("ImageLabel",{Size=UDim2.new(0.78,0,0.78,0),Position=UDim2.new(0.11,0,0.11,0),
-    BackgroundTransparency=1,Image="",ScaleType=Enum.ScaleType.Fit},PrevWrap)
-local PreviewNone=inst("TextLabel",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,
-    Text="No preview",Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.MUT,
-    TextXAlignment=Enum.TextXAlignment.Center},PrevWrap)
+local PreviewImg=inst("ImageLabel",{Size=UDim2.new(0.78,0,0.78,0),Position=UDim2.new(0.11,0,0.11,0),BackgroundTransparency=1,Image="",ScaleType=Enum.ScaleType.Fit},PrevWrap)
+local PreviewNone=inst("TextLabel",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Text="No preview",Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Center},PrevWrap)
 track(PreviewNone,"TextColor3","MUT")
-
 local py=M+PREV_H+8
-local PreviewSkinName=inst("TextLabel",{Size=UDim2.new(0,IW,0,16),Position=UDim2.new(0,M,0,py),
-    BackgroundTransparency=1,Text="—",Font=Enum.Font.GothamBold,TextSize=12,
-    TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},RP)
+local PreviewSkinName=inst("TextLabel",{Size=UDim2.new(0,IW,0,16),Position=UDim2.new(0,M,0,py),BackgroundTransparency=1,Text="—",Font=Enum.Font.GothamBold,TextSize=12,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Left},RP)
 track(PreviewSkinName,"TextColor3","PRI")
-
-local PreviewWeaponLabel=inst("TextLabel",{Size=UDim2.new(0,IW,0,12),Position=UDim2.new(0,M,0,py+18),
-    BackgroundTransparency=1,Text="",Font=Enum.Font.Gotham,TextSize=9,
-    TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},RP)
+local PreviewWeaponLabel=inst("TextLabel",{Size=UDim2.new(0,IW,0,12),Position=UDim2.new(0,M,0,py+18),BackgroundTransparency=1,Text="",Font=Enum.Font.Gotham,TextSize=9,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left},RP)
 track(PreviewWeaponLabel,"TextColor3","SEC")
-
-local RarityBadge=inst("TextLabel",{Size=UDim2.new(0,IW,0,11),Position=UDim2.new(0,M,0,py+32),
-    BackgroundTransparency=1,Text="",Font=Enum.Font.GothamSemibold,TextSize=8,
-    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},RP)
-
+local RarityBadge=inst("TextLabel",{Size=UDim2.new(0,IW,0,11),Position=UDim2.new(0,M,0,py+32),BackgroundTransparency=1,Text="",Font=Enum.Font.GothamSemibold,TextSize=8,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},RP)
 local div1y=py+46
-inst("Frame",{Size=UDim2.new(0,IW,0,1),Position=UDim2.new(0,M,0,div1y),
-    BackgroundColor3=T.LINE,BorderSizePixel=0},RP)
-
-local EquipBtn=inst("TextButton",{Size=UDim2.new(0,IW,0,28),Position=UDim2.new(0,M,0,div1y+8),
-    BackgroundColor3=T.ACCENT,Text="Equip",Font=Enum.Font.GothamBold,TextSize=11,
-    TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},RP)
+inst("Frame",{Size=UDim2.new(0,IW,0,1),Position=UDim2.new(0,M,0,div1y),BackgroundColor3=T.LINE,BorderSizePixel=0},RP)
+local EquipBtn=inst("TextButton",{Size=UDim2.new(0,IW,0,28),Position=UDim2.new(0,M,0,div1y+8),BackgroundColor3=T.ACCENT,Text="Equip",Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},RP)
 corner(EquipBtn,6); track(EquipBtn,"BackgroundColor3","ACCENT")
 EquipBtn.MouseEnter:Connect(function()
     local r,g,b=T.ACCENT.R*255,T.ACCENT.G*255,T.ACCENT.B*255
     tw(EquipBtn,{BackgroundColor3=Color3.fromRGB(math.min(r+28,255),math.min(g+28,255),math.min(b+28,255))})
 end)
 EquipBtn.MouseLeave:Connect(function() tw(EquipBtn,{BackgroundColor3=T.ACCENT}) end)
-
-local RevertBtn=inst("TextButton",{Size=UDim2.new(0,IW,0,22),Position=UDim2.new(0,M,0,div1y+42),
-    BackgroundColor3=T.CARD,Text="Revert to default",Font=Enum.Font.GothamSemibold,TextSize=9,
-    TextColor3=T.SEC,BorderSizePixel=0},RP)
+local RevertBtn=inst("TextButton",{Size=UDim2.new(0,IW,0,22),Position=UDim2.new(0,M,0,div1y+42),BackgroundColor3=T.CARD,Text="Revert to default",Font=Enum.Font.GothamSemibold,TextSize=9,TextColor3=T.SEC,BorderSizePixel=0},RP)
 corner(RevertBtn,5); track(RevertBtn,"BackgroundColor3","CARD"); track(RevertBtn,"TextColor3","SEC")
 local rbStroke=stroke(RevertBtn,T.BORDER,1); track(rbStroke,"Color","BORDER")
 RevertBtn.MouseEnter:Connect(function() tw(RevertBtn,{BackgroundColor3=T.CARDH}) end)
 RevertBtn.MouseLeave:Connect(function() tw(RevertBtn,{BackgroundColor3=T.CARD}) end)
-
 local ov_y=div1y+72
-inst("TextLabel",{Size=UDim2.new(0,IW,0,12),Position=UDim2.new(0,M,0,ov_y),
-    BackgroundTransparency=1,Text="Active overrides",Font=Enum.Font.GothamBold,TextSize=8,
-    TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},RP)
-
-local SummaryScroll=inst("ScrollingFrame",{
-    Size=UDim2.new(0,IW,0,BODY_H-ov_y-16),Position=UDim2.new(0,M,0,ov_y+14),
-    BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
-    ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},RP)
+inst("TextLabel",{Size=UDim2.new(0,IW,0,12),Position=UDim2.new(0,M,0,ov_y),BackgroundTransparency=1,Text="Active overrides",Font=Enum.Font.GothamBold,TextSize=8,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},RP)
+local SummaryScroll=inst("ScrollingFrame",{Size=UDim2.new(0,IW,0,BODY_H-ov_y-16),Position=UDim2.new(0,M,0,ov_y+14),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,ScrollBarImageColor3=T.MUT,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},RP)
 inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)},SummaryScroll)
 
--- SETTINGS PAGE
-inst("UIPadding",{PaddingTop=UDim.new(0,20),PaddingLeft=UDim.new(0,22),
-    PaddingRight=UDim.new(0,22),PaddingBottom=UDim.new(0,16)},SettingsPage)
-
+inst("UIPadding",{PaddingTop=UDim.new(0,20),PaddingLeft=UDim.new(0,22),PaddingRight=UDim.new(0,22),PaddingBottom=UDim.new(0,16)},SettingsPage)
 local function settingLabel(text,ypos)
-    local l=inst("TextLabel",{Size=UDim2.new(1,0,0,13),Position=UDim2.new(0,0,0,ypos),
-        BackgroundTransparency=1,Text=text,Font=Enum.Font.GothamBold,TextSize=9,
-        TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
-    track(l,"TextColor3","MUT")
-    return l
+    local l=inst("TextLabel",{Size=UDim2.new(1,0,0,13),Position=UDim2.new(0,0,0,ypos),BackgroundTransparency=1,Text=text,Font=Enum.Font.GothamBold,TextSize=9,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left},SettingsPage)
+    track(l,"TextColor3","MUT"); return l
 end
-
 settingLabel("General",0)
-
-local KeybindBtn=inst("TextButton",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,18),
-    BackgroundColor3=T.CARD,Text="Toggle keybind:  "..tostring(State.keybind.Name),
-    Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.PRI,BorderSizePixel=0},SettingsPage)
+local KeybindBtn=inst("TextButton",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,18),BackgroundColor3=T.CARD,Text="Toggle keybind:  "..tostring(State.keybind.Name),Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.PRI,BorderSizePixel=0},SettingsPage)
 corner(KeybindBtn,6); track(KeybindBtn,"BackgroundColor3","CARD"); track(KeybindBtn,"TextColor3","PRI")
 local kbStroke=stroke(KeybindBtn,T.BORDER,1); track(kbStroke,"Color","BORDER")
-
-local ClearAllBtn=inst("TextButton",{Size=UDim2.new(1,0,0,28),Position=UDim2.new(0,0,0,54),
-    BackgroundColor3=T.CARD,Text="Clear all equipped skins",
-    Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.RED,BorderSizePixel=0},SettingsPage)
+local ClearAllBtn=inst("TextButton",{Size=UDim2.new(1,0,0,28),Position=UDim2.new(0,0,0,54),BackgroundColor3=T.CARD,Text="Clear all equipped skins",Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.RED,BorderSizePixel=0},SettingsPage)
 corner(ClearAllBtn,6); track(ClearAllBtn,"BackgroundColor3","CARD")
 stroke(ClearAllBtn,Color3.fromRGB(80,24,24),1)
 ClearAllBtn.MouseEnter:Connect(function() tw(ClearAllBtn,{BackgroundColor3=Color3.fromRGB(38,10,10)}) end)
 ClearAllBtn.MouseLeave:Connect(function() tw(ClearAllBtn,{BackgroundColor3=T.CARD}) end)
-
-inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,92),
-    BackgroundColor3=T.LINE,BorderSizePixel=0},SettingsPage)
-
+inst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,92),BackgroundColor3=T.LINE,BorderSizePixel=0},SettingsPage)
 settingLabel("Theme",100)
-
-local dropOpen = false
-local DropBtn=inst("TextButton",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,118),
-    BackgroundColor3=T.CARD,Text=CurrentStyle.."  ▾",
-    Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.PRI,BorderSizePixel=0},SettingsPage)
+local dropOpen=false
+local DropBtn=inst("TextButton",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,118),BackgroundColor3=T.CARD,Text=CurrentStyle.."  ▾",Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=T.PRI,BorderSizePixel=0},SettingsPage)
 corner(DropBtn,6); track(DropBtn,"BackgroundColor3","CARD"); track(DropBtn,"TextColor3","PRI")
 local dbStroke=stroke(DropBtn,T.BORDER,1); track(dbStroke,"Color","BORDER")
-
-local DropList=inst("Frame",{Size=UDim2.new(1,0,0,0),Position=UDim2.new(0,0,0,152),
-    BackgroundColor3=T.CARD,BorderSizePixel=0,Visible=false,ClipsDescendants=true},SettingsPage)
-corner(DropList,6)
-local dlStroke=stroke(DropList,T.BORDER,1); track(dlStroke,"Color","BORDER")
+local DropList=inst("Frame",{Size=UDim2.new(1,0,0,0),Position=UDim2.new(0,0,0,152),BackgroundColor3=T.CARD,BorderSizePixel=0,Visible=false,ClipsDescendants=true},SettingsPage)
+corner(DropList,6); local dlStroke=stroke(DropList,T.BORDER,1); track(dlStroke,"Color","BORDER")
 inst("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,1)},DropList)
-inst("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),
-    PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4)},DropList)
-
+inst("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4)},DropList)
 local styleBtns={}
 for i,sName in ipairs(STYLE_NAMES) do
-    local item=inst("TextButton",{
-        Size=UDim2.new(1,0,0,28),BackgroundColor3=T.CARD,
-        Text=sName,Font=Enum.Font.GothamSemibold,TextSize=10,
-        TextColor3=sName==CurrentStyle and T.PRI or T.SEC,
-        BorderSizePixel=0,LayoutOrder=i},DropList)
+    local item=inst("TextButton",{Size=UDim2.new(1,0,0,28),BackgroundColor3=T.CARD,Text=sName,Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=sName==CurrentStyle and T.PRI or T.SEC,BorderSizePixel=0,LayoutOrder=i},DropList)
     corner(item,5); track(item,"BackgroundColor3","CARD")
     if sName==CurrentStyle then
-        inst("TextLabel",{Size=UDim2.new(0,16,1,0),Position=UDim2.new(1,-20,0,0),
-            BackgroundTransparency=1,Text="✓",Font=Enum.Font.GothamBold,TextSize=9,
-            TextColor3=T.ACCENT,TextXAlignment=Enum.TextXAlignment.Center},item)
+        inst("TextLabel",{Size=UDim2.new(0,16,1,0),Position=UDim2.new(1,-20,0,0),BackgroundTransparency=1,Text="✓",Font=Enum.Font.GothamBold,TextSize=9,TextColor3=T.ACCENT,TextXAlignment=Enum.TextXAlignment.Center},item)
     end
     styleBtns[sName]=item
     item.MouseEnter:Connect(function() tw(item,{BackgroundColor3=T.CARDH}) end)
     item.MouseLeave:Connect(function() tw(item,{BackgroundColor3=T.CARD}) end)
     item.MouseButton1Click:Connect(function()
-        applyStyle(sName)
-        DropBtn.Text=sName.."  ▾"
-        DropList.Visible=false; dropOpen=false
-        for n2,btn2 in pairs(styleBtns) do
-            btn2.TextColor3 = n2==sName and T.PRI or T.SEC
-        end
+        applyStyle(sName); DropBtn.Text=sName.."  ▾"; DropList.Visible=false; dropOpen=false
+        for n2,btn2 in pairs(styleBtns) do btn2.TextColor3=n2==sName and T.PRI or T.SEC end
     end)
 end
 DropList.Size=UDim2.new(1,0,0,#STYLE_NAMES*29+8)
-
 DropBtn.MouseButton1Click:Connect(function()
-    dropOpen=not dropOpen
-    DropList.Visible=dropOpen
+    dropOpen=not dropOpen; DropList.Visible=dropOpen
     DropBtn.Text=CurrentStyle..(dropOpen and "  ▴" or "  ▾")
 end)
 
--- SELECTION STATE
-local SelectedWeapon = nil
-local SelectedSkin   = nil
-local SkinCards      = {}
+local SelectedWeapon=nil; local SelectedSkin=nil; local SkinCards={}
 
 local function rebuildSummary()
     for _,c in ipairs(SummaryScroll:GetChildren()) do
@@ -942,112 +848,50 @@ local function rebuildSummary()
     for w,s in pairs(EquippedSkins) do
         if s and s~="Default" then
             any=true
-            local row=inst("Frame",{Size=UDim2.new(1,0,0,20),BackgroundColor3=T.CARD,
-                BorderSizePixel=0,LayoutOrder=order},SummaryScroll)
+            local row=inst("Frame",{Size=UDim2.new(1,0,0,20),BackgroundColor3=T.CARD,BorderSizePixel=0,LayoutOrder=order},SummaryScroll)
             corner(row,4)
             inst("UIPadding",{PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,5)},row)
-            inst("TextLabel",{Size=UDim2.new(0.46,0,1,0),BackgroundTransparency=1,
-                Text=w,Font=Enum.Font.GothamSemibold,TextSize=9,
-                TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left,
-                TextTruncate=Enum.TextTruncate.AtEnd},row)
-            inst("TextLabel",{Size=UDim2.new(0.54,0,1,0),Position=UDim2.new(0.46,0,0,0),
-                BackgroundTransparency=1,Text=s,Font=Enum.Font.GothamSemibold,TextSize=9,
-                TextColor3=getRarityColor(s),TextXAlignment=Enum.TextXAlignment.Right,
-                TextTruncate=Enum.TextTruncate.AtEnd},row)
+            inst("TextLabel",{Size=UDim2.new(0.46,0,1,0),BackgroundTransparency=1,Text=w,Font=Enum.Font.GothamSemibold,TextSize=9,TextColor3=T.SEC,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},row)
+            inst("TextLabel",{Size=UDim2.new(0.54,0,1,0),Position=UDim2.new(0.46,0,0,0),BackgroundTransparency=1,Text=s,Font=Enum.Font.GothamSemibold,TextSize=9,TextColor3=getRarityColor(s),TextXAlignment=Enum.TextXAlignment.Right,TextTruncate=Enum.TextTruncate.AtEnd},row)
             order+=1
         end
     end
-    if not any then
-        inst("TextLabel",{Size=UDim2.new(1,0,0,20),BackgroundTransparency=1,
-            Text="None active",Font=Enum.Font.Gotham,TextSize=10,
-            TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=1},SummaryScroll)
-    end
+    if not any then inst("TextLabel",{Size=UDim2.new(1,0,0,20),BackgroundTransparency=1,Text="None active",Font=Enum.Font.Gotham,TextSize=10,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=1},SummaryScroll) end
 end
 
-local function selectCard(skinName, thumb)
-    SelectedSkin=skinName
-    PreviewImg.Image=thumb or ""
-    PreviewNone.Visible=(not thumb or thumb=="")
-    PreviewSkinName.Text=skinName
-    PreviewWeaponLabel.Text=SelectedWeapon or ""
+local function selectCard(skinName,thumb)
+    SelectedSkin=skinName; PreviewImg.Image=thumb or ""; PreviewNone.Visible=(not thumb or thumb=="")
+    PreviewSkinName.Text=skinName; PreviewWeaponLabel.Text=SelectedWeapon or ""
     local d=buildCosmeticData(skinName)
-    if d and d.Rarity then
-        RarityBadge.Text=d.Rarity
-        RarityBadge.TextColor3=getRarityColor(skinName)
-    else
-        RarityBadge.Text=""
-    end
-    EquipBtn.Text="Equip Skin"
-    EquipBtn.BackgroundColor3=T.ACCENT
+    if d and d.Rarity then RarityBadge.Text=d.Rarity; RarityBadge.TextColor3=getRarityColor(skinName) else RarityBadge.Text="" end
+    EquipBtn.Text="Equip Skin"; EquipBtn.BackgroundColor3=T.ACCENT
     for sn,card in pairs(SkinCards) do
         local isEquipped=SelectedWeapon and EquippedSkins[SelectedWeapon]==sn
-        if sn==skinName then
-            tw(card,{BackgroundColor3=T.SEL})
-            local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=true end
-        elseif isEquipped then
-            tw(card,{BackgroundColor3=T.CARDSEL})
-            local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=false end
-        else
-            tw(card,{BackgroundColor3=T.CARD})
-            local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=false end
-        end
+        if sn==skinName then tw(card,{BackgroundColor3=T.SEL}); local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=true end
+        elseif isEquipped then tw(card,{BackgroundColor3=T.CARDSEL}); local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=false end
+        else tw(card,{BackgroundColor3=T.CARD}); local ring=card:FindFirstChild("_ring"); if ring then ring.Visible=false end end
     end
 end
 
 local function buildSkinGrid(weaponName)
-    for _,c in ipairs(SkinGrid:GetChildren()) do
-        if c:IsA("ImageButton") or c:IsA("Frame") then c:Destroy() end
-    end
-    SkinCards={}; SelectedSkin=nil
-    MidTitle.Text=weaponName:upper()
-    local skins=SkinLists[weaponName] or {}
-    local equipped=EquippedSkins[weaponName]
+    for _,c in ipairs(SkinGrid:GetChildren()) do if c:IsA("ImageButton") or c:IsA("Frame") then c:Destroy() end end
+    SkinCards={}; SelectedSkin=nil; MidTitle.Text=weaponName:upper()
+    local skins=SkinLists[weaponName] or {}; local equipped=EquippedSkins[weaponName]
     for i,skinName in ipairs(skins) do
         local isEquipped=(equipped==skinName) or (skinName=="Default" and (not equipped or equipped=="Default"))
         local thumb=getThumbnail(skinName)
-        local card=inst("ImageButton",{
-            Size=UDim2.new(0,CARD_W+2,0,CARD_H+2),
-            BackgroundColor3=isEquipped and T.CARDSEL or T.CARD,
-            BorderSizePixel=0,Image="",LayoutOrder=i},SkinGrid)
+        local card=inst("ImageButton",{Size=UDim2.new(0,CARD_W+2,0,CARD_H+2),BackgroundColor3=isEquipped and T.CARDSEL or T.CARD,BorderSizePixel=0,Image="",LayoutOrder=i},SkinGrid)
         corner(card,6); stroke(card,isEquipped and T.SELBRD or T.BORDER,1)
-        local imgH = math.floor(CARD_H*0.6)
-        local imgFrame=inst("Frame",{
-            Size=UDim2.new(1,-8,0,imgH),Position=UDim2.new(0,4,0,4),
-            BackgroundColor3=T.BG,BorderSizePixel=0},card); corner(imgFrame,5)
-        inst("ImageLabel",{
-            Size=UDim2.new(0.88,0,0.88,0),Position=UDim2.new(0.06,0,0.06,0),
-            BackgroundTransparency=1,Image=thumb,ScaleType=Enum.ScaleType.Fit,BorderSizePixel=0},imgFrame)
-        if not thumb or thumb=="" then
-            inst("TextLabel",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,
-                Text="?",Font=Enum.Font.GothamBold,TextSize=20,
-                TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Center},imgFrame)
-        end
-        inst("TextLabel",{
-            Size=UDim2.new(1,-4,0,CARD_H-imgH-4),Position=UDim2.new(0,2,0,imgH+4),
-            BackgroundTransparency=1,Text=skinName,
-            Font=Enum.Font.GothamSemibold,TextSize=8,
-            TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Center,TextWrapped=true},card)
-        if isEquipped then
-            local badge=inst("TextLabel",{
-                Size=UDim2.new(0,44,0,12),Position=UDim2.new(0,3,0,3),
-                BackgroundColor3=T.GREEN,Text="EQUIPPED",
-                Font=Enum.Font.GothamBold,TextSize=6,
-                TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},card); corner(badge,3)
-        end
-        if skinName~="Default" then
-            local rc=getRarityColor(skinName)
-            local rdot=inst("Frame",{
-                Size=UDim2.new(0,5,0,5),Position=UDim2.new(1,-8,0,3),
-                BackgroundColor3=rc,BorderSizePixel=0},card); corner(rdot,3)
-        end
-        local ring=inst("Frame",{
-            Name="_ring",Size=UDim2.new(1,0,1,0),
-            BackgroundTransparency=1,BorderSizePixel=0,Visible=false},card)
-        stroke(ring,T.ACCENT,2); corner(ring,9)
-        SkinCards[skinName]=card
-        card.MouseEnter:Connect(function()
-            if SelectedSkin~=skinName then tw(card,{BackgroundColor3=T.CARDH}) end
-        end)
+        local imgH=math.floor(CARD_H*0.6)
+        local imgFrame=inst("Frame",{Size=UDim2.new(1,-8,0,imgH),Position=UDim2.new(0,4,0,4),BackgroundColor3=T.BG,BorderSizePixel=0},card); corner(imgFrame,5)
+        inst("ImageLabel",{Size=UDim2.new(0.88,0,0.88,0),Position=UDim2.new(0.06,0,0.06,0),BackgroundTransparency=1,Image=thumb,ScaleType=Enum.ScaleType.Fit,BorderSizePixel=0},imgFrame)
+        if not thumb or thumb=="" then inst("TextLabel",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Text="?",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=T.MUT,TextXAlignment=Enum.TextXAlignment.Center},imgFrame) end
+        inst("TextLabel",{Size=UDim2.new(1,-4,0,CARD_H-imgH-4),Position=UDim2.new(0,2,0,imgH+4),BackgroundTransparency=1,Text=skinName,Font=Enum.Font.GothamSemibold,TextSize=8,TextColor3=T.PRI,TextXAlignment=Enum.TextXAlignment.Center,TextWrapped=true},card)
+        if isEquipped then local badge=inst("TextLabel",{Size=UDim2.new(0,44,0,12),Position=UDim2.new(0,3,0,3),BackgroundColor3=T.GREEN,Text="EQUIPPED",Font=Enum.Font.GothamBold,TextSize=6,TextColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0},card); corner(badge,3) end
+        if skinName~="Default" then local rdot=inst("Frame",{Size=UDim2.new(0,5,0,5),Position=UDim2.new(1,-8,0,3),BackgroundColor3=getRarityColor(skinName),BorderSizePixel=0},card); corner(rdot,3) end
+        local ring=inst("Frame",{Name="_ring",Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,Visible=false},card)
+        stroke(ring,T.ACCENT,2); corner(ring,9); SkinCards[skinName]=card
+        card.MouseEnter:Connect(function() if SelectedSkin~=skinName then tw(card,{BackgroundColor3=T.CARDH}) end end)
         card.MouseLeave:Connect(function()
             if SelectedSkin~=skinName then
                 local eq=(EquippedSkins[weaponName]==skinName) or (skinName=="Default" and not EquippedSkins[weaponName])
@@ -1057,60 +901,37 @@ local function buildSkinGrid(weaponName)
         card.MouseButton1Click:Connect(function() selectCard(skinName,thumb) end)
     end
     local cur=EquippedSkins[weaponName]
-    if cur and SkinCards[cur] then selectCard(cur,getThumbnail(cur))
-    else selectCard("Default",getThumbnail("Default")) end
+    if cur and SkinCards[cur] then selectCard(cur,getThumbnail(cur)) else selectCard("Default",getThumbnail("Default")) end
 end
 
 local function buildWeaponList(filter)
     filter=(filter or ""):lower()
-    for _,c in ipairs(WList:GetChildren()) do
-        if c:IsA("TextButton") then c:Destroy() end
-    end
+    for _,c in ipairs(WList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
     local order=1
     for _,wn in ipairs(WeaponList) do
         if filter=="" or wn:lower():find(filter,1,true) then
-            local isSel=(SelectedWeapon==wn)
-            local hasApp=(EquippedSkins[wn] and EquippedSkins[wn]~="Default")
-            local btn=inst("TextButton",{
-                Size=UDim2.new(1,0,0,26),
-                BackgroundColor3=isSel and T.SEL or T.CARD,
-                BorderSizePixel=0,Text="",LayoutOrder=order},WList)
-            corner(btn,5)
-            if isSel then stroke(btn,T.SELBRD,1) end
-            inst("TextLabel",{
-                Size=UDim2.new(1,-16,1,0),Position=UDim2.new(0,8,0,0),
-                BackgroundTransparency=1,Text=wn,
-                Font=Enum.Font.GothamSemibold,TextSize=10,
-                TextColor3=isSel and T.PRI or (hasApp and T.GREEN or T.SEC),
-                TextXAlignment=Enum.TextXAlignment.Left,
-                TextTruncate=Enum.TextTruncate.AtEnd},btn)
-            if hasApp then
-                local d=inst("Frame",{
-                    Size=UDim2.new(0,4,0,4),Position=UDim2.new(1,-8,0.5,-2),
-                    BackgroundColor3=T.GREEN,BorderSizePixel=0},btn); corner(d,2)
-            end
+            local isSel=(SelectedWeapon==wn); local hasApp=(EquippedSkins[wn] and EquippedSkins[wn]~="Default")
+            local btn=inst("TextButton",{Size=UDim2.new(1,0,0,26),BackgroundColor3=isSel and T.SEL or T.CARD,BorderSizePixel=0,Text="",LayoutOrder=order},WList)
+            corner(btn,5); if isSel then stroke(btn,T.SELBRD,1) end
+            inst("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.new(0,8,0,0),BackgroundTransparency=1,Text=wn,Font=Enum.Font.GothamSemibold,TextSize=10,TextColor3=isSel and T.PRI or (hasApp and T.GREEN or T.SEC),TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},btn)
+            if hasApp then local d=inst("Frame",{Size=UDim2.new(0,4,0,4),Position=UDim2.new(1,-8,0.5,-2),BackgroundColor3=T.GREEN,BorderSizePixel=0},btn); corner(d,2) end
             btn.MouseEnter:Connect(function() if not isSel then tw(btn,{BackgroundColor3=T.CARDH}) end end)
             btn.MouseLeave:Connect(function() if not isSel then tw(btn,{BackgroundColor3=isSel and T.SEL or T.CARD}) end end)
-            btn.MouseButton1Click:Connect(function()
-                SelectedWeapon=wn; buildSkinGrid(wn); buildWeaponList(WSearch.Text)
-            end)
+            btn.MouseButton1Click:Connect(function() SelectedWeapon=wn; buildSkinGrid(wn); buildWeaponList(WSearch.Text) end)
             order+=1
         end
     end
 end
 WSearch:GetPropertyChangedSignal("Text"):Connect(function() buildWeaponList(WSearch.Text) end)
 
--- BUTTON HANDLERS
 EquipBtn.MouseButton1Click:Connect(function()
     if not SelectedWeapon or not SelectedSkin then return end
-    applyEquippedSkin(SelectedWeapon, SelectedSkin)
+    applyEquippedSkin(SelectedWeapon,SelectedSkin)
     StatusBadge.Text="✓ "..SelectedSkin; StatusBadge.TextColor3=T.GREEN
     task.delay(3,function() StatusBadge.Text="Ready"; StatusBadge.TextColor3=T.SEC end)
-    tw(EquipBtn,{BackgroundColor3=T.GREEN})
-    task.delay(0.7,function() tw(EquipBtn,{BackgroundColor3=T.ACCENT}) end)
+    tw(EquipBtn,{BackgroundColor3=T.GREEN}); task.delay(0.7,function() tw(EquipBtn,{BackgroundColor3=T.ACCENT}) end)
     buildSkinGrid(SelectedWeapon); WSearch.Text=""; buildWeaponList(""); rebuildSummary()
 end)
-
 RevertBtn.MouseButton1Click:Connect(function()
     if not SelectedWeapon then return end
     applyEquippedSkin(SelectedWeapon,"Default")
@@ -1118,7 +939,6 @@ RevertBtn.MouseButton1Click:Connect(function()
     task.delay(2.5,function() StatusBadge.Text="Ready"; StatusBadge.TextColor3=T.SEC end)
     buildSkinGrid(SelectedWeapon); WSearch.Text=""; buildWeaponList(""); rebuildSummary()
 end)
-
 ClearAllBtn.MouseButton1Click:Connect(function()
     for w in pairs(EquippedSkins) do applyEquippedSkin(w,"Default") end
     saveData(EquippedSkins,State.keybind)
@@ -1127,106 +947,56 @@ ClearAllBtn.MouseButton1Click:Connect(function()
     ClearAllBtn.Text="Cleared ✓"; ClearAllBtn.TextColor3=T.GREEN
     task.delay(1.5,function() ClearAllBtn.Text="Clear all equipped skins"; ClearAllBtn.TextColor3=T.RED end)
 end)
-
 KeybindBtn.MouseButton1Click:Connect(function()
     if State.rebinding then return end
-    State.rebinding=true
-    KeybindBtn.Text="Press any key..."; KeybindBtn.TextColor3=T.YELLOW
+    State.rebinding=true; KeybindBtn.Text="Press any key..."; KeybindBtn.TextColor3=T.YELLOW
     tw(KeybindBtn,{BackgroundColor3=Color3.fromRGB(40,35,10)})
     local conn
     conn=UserInputService.InputBegan:Connect(function(i,gpe)
         if gpe then return end
         if i.UserInputType==Enum.UserInputType.Keyboard then
-            State.keybind=i.KeyCode
-            KeybindBtn.Text="Toggle keybind:  "..tostring(i.KeyCode.Name)
-            KeybindBtn.TextColor3=T.PRI
-            tw(KeybindBtn,{BackgroundColor3=T.CARD})
-            saveData(EquippedSkins,State.keybind)
-            State.rebinding=false; conn:Disconnect()
+            State.keybind=i.KeyCode; KeybindBtn.Text="Toggle keybind:  "..tostring(i.KeyCode.Name)
+            KeybindBtn.TextColor3=T.PRI; tw(KeybindBtn,{BackgroundColor3=T.CARD})
+            saveData(EquippedSkins,State.keybind); State.rebinding=false; conn:Disconnect()
         end
     end)
 end)
-
 UserInputService.InputBegan:Connect(function(i,gpe)
     if gpe or State.rebinding then return end
     if i.KeyCode==State.keybind then ScreenGui.Enabled=not ScreenGui.Enabled end
 end)
 
--- TOGGLE BUTTON
-local ToggleGui = inst("ScreenGui",{
-    Name="RivalsScToggle", ResetOnSpawn=false,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
-    IgnoreGuiInset=true, DisplayOrder=999,
-},PlayerGui)
-
-local ToggleBtn = inst("TextButton",{
-    Size        = UDim2.new(0,38,0,22),
-    Position    = UDim2.new(0,14,0.5,-11),
-    BackgroundColor3 = Color3.fromRGB(20,20,28),
-    BackgroundTransparency = 0.35,
-    Text        = "SC",
-    Font        = Enum.Font.GothamBold,
-    TextSize    = 10,
-    TextColor3  = Color3.fromRGB(200,210,255),
-    BorderSizePixel = 0,
-    ZIndex      = 10,
-},ToggleGui)
-corner(ToggleBtn, 11)
-inst("UIStroke",{
-    Color=Color3.fromRGB(80,100,220), Thickness=1,
-    Transparency=0.5,
-    ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
-},ToggleBtn)
-
+local ToggleGui=inst("ScreenGui",{Name="RivalsScToggle",ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=true,DisplayOrder=999},PlayerGui)
+local ToggleBtn=inst("TextButton",{Size=UDim2.new(0,38,0,22),Position=UDim2.new(0,14,0.5,-11),BackgroundColor3=Color3.fromRGB(20,20,28),BackgroundTransparency=0.35,Text="SC",Font=Enum.Font.GothamBold,TextSize=10,TextColor3=Color3.fromRGB(200,210,255),BorderSizePixel=0,ZIndex=10},ToggleGui)
+corner(ToggleBtn,11)
+inst("UIStroke",{Color=Color3.fromRGB(80,100,220),Thickness=1,Transparency=0.5,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},ToggleBtn)
 do
-    local td, tds, tsp = false, nil, nil
-    local moved = false
-
+    local td,tds,tsp,moved=false,nil,nil,false
     local function tbMove(pos)
         if not td then return end
-        local d = pos - tds
-        if math.abs(d.X)+math.abs(d.Y) > 6 then moved=true end
+        local d=pos-tds; if math.abs(d.X)+math.abs(d.Y)>6 then moved=true end
         ToggleBtn.Position=UDim2.new(tsp.X.Scale,tsp.X.Offset+d.X,tsp.Y.Scale,tsp.Y.Offset+d.Y)
     end
     local function tbEnd()
-        if not td then return end
-        td=false
-        if not moved then
-            ScreenGui.Enabled = not ScreenGui.Enabled
-        end
+        if not td then return end; td=false
+        if not moved then ScreenGui.Enabled=not ScreenGui.Enabled end
     end
-
     ToggleBtn.InputBegan:Connect(function(i)
-        if i.UserInputType==Enum.UserInputType.MouseButton1
-        or i.UserInputType==Enum.UserInputType.Touch then
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
             td=true; tds=i.Position; tsp=ToggleBtn.Position; moved=false
-            local mc, ec
-            mc = UserInputService.InputChanged:Connect(function(i2)
-                if i2.UserInputType==Enum.UserInputType.MouseMovement
-                or i2.UserInputType==Enum.UserInputType.Touch then
-                    tbMove(i2.Position)
-                end
+            local mc,ec
+            mc=UserInputService.InputChanged:Connect(function(i2)
+                if i2.UserInputType==Enum.UserInputType.MouseMovement or i2.UserInputType==Enum.UserInputType.Touch then tbMove(i2.Position) end
             end)
-            ec = UserInputService.InputEnded:Connect(function(i2)
-                if i2.UserInputType==Enum.UserInputType.MouseButton1
-                or i2.UserInputType==Enum.UserInputType.Touch then
-                    tbEnd()
-                    mc:Disconnect(); ec:Disconnect()
-                end
+            ec=UserInputService.InputEnded:Connect(function(i2)
+                if i2.UserInputType==Enum.UserInputType.MouseButton1 or i2.UserInputType==Enum.UserInputType.Touch then tbEnd(); mc:Disconnect(); ec:Disconnect() end
             end)
         end
     end)
 end
 
--- INIT
-buildWeaponList()
-rebuildSummary()
-
-local total=0; for _,s in pairs(SkinLists) do total+=# s end
+buildWeaponList(); rebuildSummary()
+local total=0; for _,s in pairs(SkinLists) do total+=#s end
 local active=0; for _,s in pairs(EquippedSkins) do if s and s~="Default" then active+=1 end end
 if active>0 then StatusBadge.Text="● "..active.." active"; StatusBadge.TextColor3=T.GREEN end
-
-print(string.format(
-    "[Rivals SC v1.1] %d weapons · %d skins · Active: %d · Keybind: %s",
-    #WeaponList, total, active, tostring(State.keybind.Name)
-))
+print(string.format("[Rivals SC v1.1] %d weapons · %d skins · Active: %d · Keybind: %s",#WeaponList,total,active,tostring(State.keybind.Name)))
