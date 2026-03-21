@@ -1,7 +1,3 @@
--- ══════════════════════════════════════════════════════════════
---  RIVALS SKIN CHANGER  v1.1  (wrap fix)
--- ══════════════════════════════════════════════════════════════
-
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
