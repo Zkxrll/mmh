@@ -240,8 +240,9 @@ local function _applyHooks()
         if _origNew then
             ClientViewModelModule.new = function(replicatedData, clientItem)
                 local wPlayer = clientItem and clientItem.ClientFighter and clientItem.ClientFighter.Player
+                if wPlayer ~= LocalPlayer then return _origNew(replicatedData, clientItem) end
                 local wName   = _constructingWeapon or (clientItem and clientItem.Name)
-                if wPlayer == LocalPlayer and wName then
+                if wName then
                     pcall(function()
                         if not ReplicatedClass then return end
                         local RC_DATA = ReplicatedClass:ToEnum("Data")
@@ -273,8 +274,7 @@ local function _applyHooks()
 
                 local vm = _origNew(replicatedData, clientItem)
 
-                -- Force wrap refresh
-                if vm and vm._UpdateWrap then
+                if vm and vm._UpdateWrap and wPlayer == LocalPlayer then
                     task.defer(function()
                         pcall(function() vm:_UpdateWrap() end)
                         task.wait(0.1)
@@ -744,13 +744,10 @@ local function buildSkinGrid(wName)
         card.MouseEnter:Connect(function() if SelectedSkin~=skinName then tw(card,{BackgroundColor3=T.CARDH}) end end)
         card.MouseLeave:Connect(function() if SelectedSkin~=skinName then local eq=(EquippedSkins[wName]==skinName) or (skinName=="Default" and not EquippedSkins[wName]); tw(card,{BackgroundColor3=eq and T.CARDSEL or T.CARD}) end end)
         card.MouseButton1Click:Connect(function() selectCard(skinName,thumb) end)
-        local cur=EquippedSkins[wName]
-        if cur and SkinCards[cur] then selectCard(cur,getThumbnail(cur)) else selectCard("Default",getThumbnail("Default")) end
-        
-        task.delay(0.1, function()
-            SkinScroll.CanvasPosition = Vector2.zero
-        end)
     end
+    local cur=EquippedSkins[wName]
+    if cur and SkinCards[cur] then selectCard(cur,getThumbnail(cur)) else selectCard("Default",getThumbnail("Default")) end
+    SkinScroll.CanvasPosition = Vector2.zero
 end
 
 local function buildWeaponList(filter)
