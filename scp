@@ -1,25 +1,78 @@
 task.wait(1)
 
--- ACB patch
-pcall(function()
+local _acbPatched = false
+
+local function applyACBPatch()
     for _, s in ipairs(getrunningscripts()) do
         if s.Name:find("MiscellaneousController") then
             local env = getsenv(s)
-            local t = {}; for k,v in pairs(task) do t[k]=v end
-            local _killed = false
-            t.wait = function(...)
-                if not _killed then _killed=true; error("__stop",0) end
-                return task.wait(...)
+            if not env or not env.task then continue end
+            if _acbPatched then break end
+
+            local t = {}
+            for k, v in pairs(task) do t[k] = v end
+
+            local _acbThreads = {}
+
+            t.spawn = function(fn, ...)
+                return task.spawn(function(...)
+                    _acbThreads[coroutine.running()] = true
+                    fn(...)
+                end, ...)
             end
+
+            t.defer = function(fn, ...)
+                return task.defer(function(...)
+                    _acbThreads[coroutine.running()] = true
+                    fn(...)
+                end, ...)
+            end
+
+            t.delay = function(n, fn, ...)
+                return task.delay(n, function(...)
+                    _acbThreads[coroutine.running()] = true
+                    fn(...)
+                end, ...)
+            end
+
+            t.wait = function(n, ...)
+                local co = coroutine.running()
+                -- Only kill waits from tagged ACB coroutines, never from require/scheduler
+                if co and _acbThreads[co] then
+                    _acbThreads[co] = nil
+                    error("__stop", 0)
+                end
+                return task.wait(n, ...)
+            end
+
             env.task = t
+            _acbPatched = true
+            break
+        end
+    end
+end
+
+-- Retry loop: keeps trying until MiscellaneousController is found
+-- Eliminates the 1/3 race condition from injection timing
+task.spawn(function()
+    for attempt = 1, 60 do
+        if _acbPatched then break end
+        pcall(applyACBPatch)
+        if not _acbPatched then
+            task.wait(0.1)
         end
     end
 end)
 
+-- ══════════════════════════════════════════════════════════════
+-- GAME GUARD
+-- ══════════════════════════════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
 if game.GameId ~= 6035872082 then warn("[SC] Wrong game"); return end
 
--- ── Services ──────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- SERVICES
+-- ══════════════════════════════════════════════════════════════
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService       = game:GetService("HttpService")
@@ -28,7 +81,9 @@ local UserInputService  = game:GetService("UserInputService")
 local LocalPlayer       = Players.LocalPlayer
 local PlayerScripts     = LocalPlayer:WaitForChild("PlayerScripts", 15)
 
--- ── Master Persistence ────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- PERSISTENCE
+-- ══════════════════════════════════════════════════════════════
 local SAVE_FILE = "rivals_sc_master.json"
 
 local MasterData = {
@@ -46,8 +101,8 @@ local function loadMasterData()
     if ok and raw and raw ~= "" then
         local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok2 and type(decoded) == "table" then
-            if decoded.Settings then MasterData.Settings = decoded.Settings end
-            if decoded.Profiles then MasterData.Profiles = decoded.Profiles end
+            if decoded.Settings     then MasterData.Settings       = decoded.Settings       end
+            if decoded.Profiles     then MasterData.Profiles       = decoded.Profiles       end
             if decoded.CurrentProfile then MasterData.CurrentProfile = decoded.CurrentProfile end
         end
     end
@@ -55,14 +110,20 @@ end
 
 loadMasterData()
 
--- ── State ─────────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- STATE
+-- ══════════════════════════════════════════════════════════════
 local EquippedSkins = {}
 if MasterData.Profiles[MasterData.CurrentProfile] then
-    for w,s in pairs(MasterData.Profiles[MasterData.CurrentProfile]) do EquippedSkins[w]=s end
+    for w, s in pairs(MasterData.Profiles[MasterData.CurrentProfile]) do
+        EquippedSkins[w] = s
+    end
 end
 local lobbyCosmetics = {}
 
--- ── Skin lists ────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- SKIN LISTS
+-- ══════════════════════════════════════════════════════════════
 local SkinLists = {
     ["Assault Rifle"]     = {"Default","AK-47","AUG","Tommy Gun","Boneclaw Rifle","Gingerbread AUG","AKEY-47","10B Visits","Phoenix Rifle","Glorious Assault Rifle"},
     ["Bow"]               = {"Default","Compound Bow","Raven Bow","Dream Bow","Bat Bow","Frostbite Bow","Beloved Bow","Balloon Bow","Key Bow","Glorious Bow"},
@@ -114,9 +175,11 @@ local SkinLists = {
 
 local WeaponList = {}
 for w in pairs(SkinLists) do table.insert(WeaponList, w) end
-table.sort(WeaponList, function(a,b) return a:lower()<b:lower() end)
+table.sort(WeaponList, function(a, b) return a:lower() < b:lower() end)
 
--- ── Core Hook Functions ───────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- CORE STATE & CACHES
+-- ══════════════════════════════════════════════════════════════
 local CosmeticLibrary, ItemLibrary, ReplicatedClass, DataController
 local ClientItem, ClientViewModelModule, EnumLibrary
 local _constructingWeapon = nil
@@ -124,13 +187,16 @@ local _hooksApplied       = false
 local _cosmeticCache      = {}
 local _cosmeticLookup     = nil
 local _wrapDebounces      = {}
-local _wdCache            = {} -- Memory leak fix: Deep cache for weapon data
+local _wdCache            = {}
 
+-- ══════════════════════════════════════════════════════════════
+-- COSMETIC HELPERS
+-- ══════════════════════════════════════════════════════════════
 local function _ensureLookup()
     if _cosmeticLookup or not CosmeticLibrary or not CosmeticLibrary.Cosmetics then return end
     _cosmeticLookup = {}
     for k in pairs(CosmeticLibrary.Cosmetics) do
-        if type(k)=="string" then _cosmeticLookup[k:lower()]=k end
+        if type(k) == "string" then _cosmeticLookup[k:lower()] = k end
     end
 end
 
@@ -138,232 +204,322 @@ local function buildCosmeticData(skinName)
     if _cosmeticCache[skinName] then return _cosmeticCache[skinName] end
     if not CosmeticLibrary or not CosmeticLibrary.Cosmetics then return nil end
     _ensureLookup()
-    local key = (CosmeticLibrary.Cosmetics[skinName] and skinName) or (_cosmeticLookup and _cosmeticLookup[skinName:lower()])
+    local key = (CosmeticLibrary.Cosmetics[skinName] and skinName)
+        or (_cosmeticLookup and _cosmeticLookup[skinName:lower()])
     local base = key and CosmeticLibrary.Cosmetics[key]
     if not base then return nil end
-    local d = {Name=skinName,Type="Skin",ItemName=base.ItemName,Rarity=base.Rarity,
-        Image=base.Image,ImageHighResolution=base.ImageHighResolution,
-        ImageScale=base.ImageScale,Description=base.Description,Seed=math.random(1,1e6)}
+    local d = {
+        Name                = skinName,
+        Type                = "Skin",
+        ItemName            = base.ItemName,
+        Rarity              = base.Rarity,
+        Image               = base.Image,
+        ImageHighResolution = base.ImageHighResolution,
+        ImageScale          = base.ImageScale,
+        Description         = base.Description,
+        Seed                = math.random(1, 1e6)
+    }
     if EnumLibrary then
         pcall(function()
-            local e=EnumLibrary:ToEnum(skinName); if e then d.Enum=e; d.ObjectID=e end
+            local e = EnumLibrary:ToEnum(skinName)
+            if e then d.Enum = e; d.ObjectID = e end
         end)
     end
-    _cosmeticCache[skinName]=d; return d
+    _cosmeticCache[skinName] = d
+    return d
 end
 
 local function buildWrapData(n)
-    local d=buildCosmeticData(n); if not d then return nil end
-    local w={}; for k,v in pairs(d) do w[k]=v end; w.Type="Wrap"; return w
+    local d = buildCosmeticData(n)
+    if not d then return nil end
+    local w = {}
+    for k, v in pairs(d) do w[k] = v end
+    w.Type = "Wrap"
+    return w
 end
 
 local function getLobbyWrap(wn)
-    local lc=lobbyCosmetics[wn]; return lc and lc.Wrap or nil
+    local lc = lobbyCosmetics[wn]
+    return lc and lc.Wrap or nil
 end
 
-local function applyEquippedSkin(wType,skinName)
-    if skinName=="Default" or skinName==nil then 
-        EquippedSkins[wType]=nil
-    else 
-        EquippedSkins[wType]=skinName
-        _cosmeticCache[skinName]=nil 
+local function applyEquippedSkin(wType, skinName)
+    if skinName == "Default" or skinName == nil then
+        EquippedSkins[wType] = nil
+    else
+        EquippedSkins[wType] = skinName
+        _cosmeticCache[skinName] = nil
     end
-    _wdCache = {} -- Clear cache so new models render properly
+    _wdCache = {}
     MasterData.Profiles[MasterData.CurrentProfile] = EquippedSkins
     saveMasterData()
 end
 
--- ── Hooks Injection ───────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- HOOKS
+-- ══════════════════════════════════════════════════════════════
 local function _applyHooks()
-    if _hooksApplied then return end; _hooksApplied=true
+    if _hooksApplied then return end
+    _hooksApplied = true
+
+    -- Ownership bypass
     if CosmeticLibrary then
         CosmeticLibrary.OwnsCosmeticNormally     = function() return true end
         CosmeticLibrary.OwnsCosmeticUniversally  = function() return true end
         CosmeticLibrary.OwnsCosmeticForSomething = function() return true end
         CosmeticLibrary.OwnsCosmeticForWeapon    = function() return true end
-        local _o=CosmeticLibrary.OwnsCosmetic
+        local _o = CosmeticLibrary.OwnsCosmetic
         if _o then
-            CosmeticLibrary.OwnsCosmetic=function(self,inv,name,weapon)
-                if name and type(name)=="string" and name:find("MISSING_",1,true) then return _o(self,inv,name,weapon) end
+            CosmeticLibrary.OwnsCosmetic = function(self, inv, name, weapon)
+                if name and type(name) == "string" and name:find("MISSING_", 1, true) then
+                    return _o(self, inv, name, weapon)
+                end
                 return true
             end
         end
     end
+
+    -- ViewModel skin injection
     if ClientItem and ClientItem._CreateViewModel then
-        local _o=ClientItem._CreateViewModel
-        ClientItem._CreateViewModel=function(self,vmRef)
-            if not self.ClientFighter or self.ClientFighter.Player ~= LocalPlayer then 
-                return _o(self,vmRef) 
+        local _o = ClientItem._CreateViewModel
+        ClientItem._CreateViewModel = function(self, vmRef)
+            if not self.ClientFighter or self.ClientFighter.Player ~= LocalPlayer then
+                return _o(self, vmRef)
             end
-            
-            local wName=self.Name
-            _constructingWeapon=wName
-            
-            local sn=EquippedSkins[wName]
-            if sn and sn~="Default" and vmRef then
+            local wName = self.Name
+            _constructingWeapon = wName
+            local sn = EquippedSkins[wName]
+            if sn and sn ~= "Default" and vmRef then
                 pcall(function()
-                    local cd=buildCosmeticData(sn); if not cd then return end
-                    local dk=self:ToEnum("Data"); local sk=self:ToEnum("Skin"); local nk=self:ToEnum("Name")
-                    if vmRef[dk] then vmRef[dk][sk]=cd; if nk then vmRef[dk][nk]=sn end
-                    elseif vmRef.Data then vmRef.Data.Skin=cd; vmRef.Data.Name=sn end
+                    local cd = buildCosmeticData(sn)
+                    if not cd then return end
+                    local dk = self:ToEnum("Data")
+                    local sk = self:ToEnum("Skin")
+                    local nk = self:ToEnum("Name")
+                    if vmRef[dk] then
+                        vmRef[dk][sk] = cd
+                        if nk then vmRef[dk][nk] = sn end
+                    elseif vmRef.Data then
+                        vmRef.Data.Skin = cd
+                        vmRef.Data.Name = sn
+                    end
                 end)
             end
-            
-            local r=_o(self,vmRef)
-            _constructingWeapon=nil
+            local r = _o(self, vmRef)
+            _constructingWeapon = nil
             return r
         end
     end
+
+    -- Wrap hook
     if ClientViewModelModule then
         if ClientViewModelModule.GetWrap then
-            local _o=ClientViewModelModule.GetWrap
-            ClientViewModelModule.GetWrap=function(self)
-                local wn=self.ClientItem and self.ClientItem.Name
-                local wp=self.ClientItem and self.ClientItem.ClientFighter and self.ClientItem.ClientFighter.Player
-                if wn and wp==LocalPlayer then
-                    local wn2=EquippedSkins[wn.."_wrap"]
-                    if wn2 then local wd=buildWrapData(wn2); if wd then return wd end end
-                    local lw=getLobbyWrap(wn); if lw then return lw end
+            local _o = ClientViewModelModule.GetWrap
+            ClientViewModelModule.GetWrap = function(self)
+                local wn = self.ClientItem and self.ClientItem.Name
+                local wp = self.ClientItem and self.ClientItem.ClientFighter
+                    and self.ClientItem.ClientFighter.Player
+                if wn and wp == LocalPlayer then
+                    local wn2 = EquippedSkins[wn .. "_wrap"]
+                    if wn2 then
+                        local wd = buildWrapData(wn2)
+                        if wd then return wd end
+                    end
+                    local lw = getLobbyWrap(wn)
+                    if lw then return lw end
                 end
                 return _o and _o(self) or nil
             end
         end
-        local _o=ClientViewModelModule.new
+
+        local _o = ClientViewModelModule.new
         if _o then
-            ClientViewModelModule.new=function(rd,ci)
-                local wp=ci and ci.ClientFighter and ci.ClientFighter.Player
-                if not wp or wp~=LocalPlayer then return _o(rd,ci) end
-                
-                local wn=_constructingWeapon or (ci and ci.Name)
+            ClientViewModelModule.new = function(rd, ci)
+                local wp = ci and ci.ClientFighter and ci.ClientFighter.Player
+                if not wp or wp ~= LocalPlayer then return _o(rd, ci) end
+                local wn = _constructingWeapon or (ci and ci.Name)
                 if wn then
                     pcall(function()
                         if not ReplicatedClass then return end
-                        local RC_D=ReplicatedClass:ToEnum("Data"); local RC_S=ReplicatedClass:ToEnum("Skin")
+                        local RC_D = ReplicatedClass:ToEnum("Data")
+                        local RC_S = ReplicatedClass:ToEnum("Skin")
                         if not RC_D or not RC_S then return end
-                        if type(rd)~="table" then return end
-                        rd[RC_D]=rd[RC_D] or {}
-                        local sn=EquippedSkins[wn]
-                        if sn and sn~="Default" then
-                            local cd=buildCosmeticData(sn)
-                            if cd then rd[RC_D][RC_S]=cd; local RC_N=ReplicatedClass:ToEnum("Name"); if RC_N then rd[RC_D][RC_N]=sn end end
+                        if type(rd) ~= "table" then return end
+                        rd[RC_D] = rd[RC_D] or {}
+                        local sn = EquippedSkins[wn]
+                        if sn and sn ~= "Default" then
+                            local cd = buildCosmeticData(sn)
+                            if cd then
+                                rd[RC_D][RC_S] = cd
+                                local RC_N = ReplicatedClass:ToEnum("Name")
+                                if RC_N then rd[RC_D][RC_N] = sn end
+                            end
                         end
-                        local RC_W=ReplicatedClass:ToEnum("Wrap")
+                        local RC_W = ReplicatedClass:ToEnum("Wrap")
                         if RC_W then
-                            local wn2=EquippedSkins[wn.."_wrap"]
-                            local wrapData=wn2 and buildWrapData(wn2) or getLobbyWrap(wn)
-                            if wrapData then rd[RC_D][RC_W]=wrapData end
+                            local wn2 = EquippedSkins[wn .. "_wrap"]
+                            local wrapData = wn2 and buildWrapData(wn2) or getLobbyWrap(wn)
+                            if wrapData then rd[RC_D][RC_W] = wrapData end
                         end
                     end)
                 end
-                local vm=_o(rd,ci)
-                if vm and vm._UpdateWrap and wp==LocalPlayer then
+                local vm = _o(rd, ci)
+                if vm and vm._UpdateWrap and wp == LocalPlayer then
                     if _wrapDebounces[vm] then task.cancel(_wrapDebounces[vm]) end
-                    _wrapDebounces[vm]=task.delay(0.15,function()
-                        _wrapDebounces[vm]=nil
-                        pcall(function() if not vm._destroyed then vm:_UpdateWrap() end end)
+                    _wrapDebounces[vm] = task.delay(0.15, function()
+                        _wrapDebounces[vm] = nil
+                        pcall(function()
+                            if not vm._destroyed then vm:_UpdateWrap() end
+                        end)
                     end)
                 end
                 return vm
             end
         end
     end
+
+    -- DataController inventory + weapon data bypass
     if DataController then
-        local _og=DataController.Get
-        local _inv=setmetatable({},{__index=function() return true end,__newindex=function() end,__len=function() return 0 end,__pairs=function() return next,{},nil end,__ipairs=function() return next,{},nil end})
-        DataController.Get=function(self,k) if k=="CosmeticInventory" then return _inv end; return _og(self,k) end
-        
-        local _ogWD=DataController.GetWeaponData
-        DataController.GetWeaponData=function(self,wn)
-            local ok,data=pcall(_ogWD,self,wn); if not ok or data==nil then return data end
-            
-            local sn=EquippedSkins[wn]
-            local wn2=EquippedSkins[wn.."_wrap"]
-            local lw=getLobbyWrap(wn)
-            
-            local hs=sn and sn~="Default"
-            local hw=wn2 or lw
+        local _og = DataController.Get
+        local _inv = setmetatable({}, {
+            __index    = function() return true end,
+            __newindex = function() end,
+            __len      = function() return 0 end,
+            __pairs    = function() return next, {}, nil end,
+            __ipairs   = function() return next, {}, nil end,
+        })
+        DataController.Get = function(self, k)
+            if k == "CosmeticInventory" then return _inv end
+            return _og(self, k)
+        end
+
+        local _ogWD = DataController.GetWeaponData
+        DataController.GetWeaponData = function(self, wn)
+            local ok, data = pcall(_ogWD, self, wn)
+            if not ok or data == nil then return data end
+            local sn  = EquippedSkins[wn]
+            local wn2 = EquippedSkins[wn .. "_wrap"]
+            local lw  = getLobbyWrap(wn)
+            local hs  = sn and sn ~= "Default"
+            local hw  = wn2 or lw
             if not hs and not hw then return data end
-            
-            -- Memory leak fix: Deep cache to prevent thousands of table clones per second
-            local cacheKey = wn .. "|" .. tostring(sn) .. "|" .. tostring(wn2) .. "|" .. tostring(lw and lw.Name)
+            local cacheKey = wn .. "|" .. tostring(sn) .. "|" .. tostring(wn2)
+                .. "|" .. tostring(lw and lw.Name)
             if _wdCache[cacheKey] then return _wdCache[cacheKey] end
-            
-            local c = table.clone(data) -- Fast C-level clone instead of pairs loop
-            if hs then local cd=buildCosmeticData(sn); if cd then c.Skin=cd end end
-            if wn2 then local wd=buildWrapData(wn2); if wd then c.Wrap=wd end elseif lw then c.Wrap=lw end
-            
+            local c = table.clone(data)
+            if hs then
+                local cd = buildCosmeticData(sn)
+                if cd then c.Skin = cd end
+            end
+            if wn2 then
+                local wd = buildWrapData(wn2)
+                if wd then c.Wrap = wd end
+            elseif lw then
+                c.Wrap = lw
+            end
             _wdCache[cacheKey] = c
             return c
         end
     end
 end
 
--- ── Load Game Modules ─────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- MODULE LOADER
+-- Fixed: cache intermediate WaitForChild results,
+--        no duplicate yields, safe nil checks before require
+-- ══════════════════════════════════════════════════════════════
 task.spawn(function()
-    local Mods=ReplicatedStorage:WaitForChild("Modules",20); if not Mods then return end
-    local PSMods=PlayerScripts:WaitForChild("Modules",20); if not PSMods then return end
-    local Ctrls=PlayerScripts:FindFirstChild("Controllers")
-    
-    pcall(function() CosmeticLibrary=require(Mods:WaitForChild("CosmeticLibrary",15)) end)
-    pcall(function() ItemLibrary=require(Mods:WaitForChild("ItemLibrary",15)) end)
-    pcall(function() ReplicatedClass=require(Mods:WaitForChild("ReplicatedClass",15)) end)
-    pcall(function() EnumLibrary=require(Mods:WaitForChild("EnumLibrary",15)) end)
-    
+    local Mods = ReplicatedStorage:WaitForChild("Modules", 20)
+    if not Mods then return end
+    local PSMods = PlayerScripts:WaitForChild("Modules", 20)
+    if not PSMods then return end
+    local Ctrls = PlayerScripts:FindFirstChild("Controllers")
+
+    pcall(function() CosmeticLibrary = require(Mods:WaitForChild("CosmeticLibrary", 15)) end)
+    pcall(function() ItemLibrary     = require(Mods:WaitForChild("ItemLibrary",     15)) end)
+    pcall(function() ReplicatedClass = require(Mods:WaitForChild("ReplicatedClass", 15)) end)
+    pcall(function() EnumLibrary     = require(Mods:WaitForChild("EnumLibrary",     15)) end)
+
+    -- Fixed: cache ClientFighter and ClientItem so WaitForChild
+    -- is only called once per node, not once per module
     pcall(function()
-        local CIF=PSMods:WaitForChild("ClientReplicatedClasses",15)
-        ClientItem=require(CIF:WaitForChild("ClientFighter",15):WaitForChild("ClientItem",15))
-        ClientViewModelModule=require(CIF:WaitForChild("ClientFighter",15):WaitForChild("ClientItem",15):WaitForChild("ClientViewModel",15))
+        local CIF = PSMods:WaitForChild("ClientReplicatedClasses", 15)
+        if not CIF then return end
+        local CFighter = CIF:WaitForChild("ClientFighter", 15)
+        if not CFighter then return end
+        local CItemInst = CFighter:WaitForChild("ClientItem", 15)
+        if not CItemInst then return end
+        ClientItem = require(CItemInst)
+        local CVMInst = CItemInst:WaitForChild("ClientViewModel", 15)
+        if CVMInst then
+            ClientViewModelModule = require(CVMInst)
+        end
     end)
-    
-    pcall(function() if Ctrls then DataController=require(Ctrls:WaitForChild("PlayerDataController",15)) end end)
+
+    pcall(function()
+        if not Ctrls then return end
+        local PDC = Ctrls:WaitForChild("PlayerDataController", 15)
+        if PDC then DataController = require(PDC) end
+    end)
 
     _applyHooks()
 end)
 
--- ── Namecall Hook ─────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- NAMECALL HOOK — lobby cosmetic tracking + kick block
+-- ══════════════════════════════════════════════════════════════
 task.spawn(function()
     if not (hookmetamethod and newcclosure and getnamecallmethod) then return end
     local old
-    old=hookmetamethod(game,"__namecall",newcclosure(function(self,...)
-        local m=getnamecallmethod()
-        if m=="Kick" and self==LocalPlayer then return nil end
-        
-        -- Optimized check: Ensures we only interact with instances, preventing crashes
-        if m=="FireServer" and typeof(self) == "Instance" and self.Name == "EquipCosmetic" then
-            local a1,a2,a3=...
+    old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local m = getnamecallmethod()
+        if m == "Kick" and self == LocalPlayer then return nil end
+        if m == "FireServer"
+            and typeof(self) == "Instance"
+            and self.Name == "EquipCosmetic"
+        then
+            local a1, a2, a3 = ...
             pcall(function()
-                local wn,ct,cn=a1,a2,a3; if not wn or not ct then return end
-                local ts=tostring(ct):lower(); local iw=ts:find("wrap")~=nil
-                if not cn or cn=="" or cn=="None" then
+                local wn, ct, cn = a1, a2, a3
+                if not wn or not ct then return end
+                local ts = tostring(ct):lower()
+                local iw = ts:find("wrap") ~= nil
+                if not cn or cn == "" or cn == "None" then
                     if lobbyCosmetics[wn] then
-                        lobbyCosmetics[wn][tostring(ct)]=nil
-                        if iw then lobbyCosmetics[wn].Wrap=nil end
-                        if not next(lobbyCosmetics[wn]) then lobbyCosmetics[wn]=nil end
+                        lobbyCosmetics[wn][tostring(ct)] = nil
+                        if iw then lobbyCosmetics[wn].Wrap = nil end
+                        if not next(lobbyCosmetics[wn]) then
+                            lobbyCosmetics[wn] = nil
+                        end
                     end
                 else
                     if CosmeticLibrary and CosmeticLibrary.Cosmetics then
-                        local base=CosmeticLibrary.Cosmetics[cn]
+                        local base = CosmeticLibrary.Cosmetics[cn]
                         if base then
-                            local cl={}; for k,v in pairs(base) do cl[k]=v end
-                            cl.Name=cn; cl.Seed=math.random(1,1e6); if iw then cl.Type="Wrap" end
-                            lobbyCosmetics[wn]=lobbyCosmetics[wn] or {}
-                            lobbyCosmetics[wn][tostring(ct)]=cl
-                            if iw then lobbyCosmetics[wn].Wrap=cl end
+                            local cl = {}
+                            for k, v in pairs(base) do cl[k] = v end
+                            cl.Name = cn
+                            cl.Seed = math.random(1, 1e6)
+                            if iw then cl.Type = "Wrap" end
+                            lobbyCosmetics[wn] = lobbyCosmetics[wn] or {}
+                            lobbyCosmetics[wn][tostring(ct)] = cl
+                            if iw then lobbyCosmetics[wn].Wrap = cl end
                         end
                     end
                 end
             end)
         end
-        return old(self,...)
+        return old(self, ...)
     end))
 end)
 
--- ════════════════════════════════════════════════════════════════════
--- ── MACLIB UI SETUP ─────────────────────────────────────────────────
--- ════════════════════════════════════════════════════════════════════
-
+-- ══════════════════════════════════════════════════════════════
+-- UI — MACLIB
+-- ══════════════════════════════════════════════════════════════
 local success, MacLib = pcall(function()
-    return loadstring(game:HttpGet("https://raw.githubusercontent.com/biggaboy212/Public-Resources/main/MacLib/maclib.lua"))()
+    return loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/biggaboy212/Public-Resources/main/MacLib/maclib.lua"
+    ))()
 end)
 
 if not success or type(MacLib) ~= "table" then
@@ -371,50 +527,45 @@ if not success or type(MacLib) ~= "table" then
     return
 end
 
-local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey] or Enum.KeyCode.RightControl
+local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey]
+    or Enum.KeyCode.RightControl
 
 local Window = MacLib:Window({
-    Title = "Rivals Skin Changer",
-    Subtitle = "Maclib Edition",
-    Size = UDim2.new(0, 700, 0, 420),
-    DragStyle = 1,
+    Title                  = "Rivals Skin Changer",
+    Subtitle               = "Maclib Edition",
+    Size                   = UDim2.new(0, 700, 0, 420),
+    DragStyle              = 1,
     DisabledWindowControls = {},
-    ShowUserInfo = false,
-    Keybind = savedKeybind,
-    AcrylicBlur = true,
+    ShowUserInfo           = false,
+    Keybind                = savedKeybind,
+    AcrylicBlur            = true,
 })
 
-local tabGroups = {
-    MainGroup = Window:TabGroup()
-}
+local tabGroups = { MainGroup = Window:TabGroup() }
 
 local tabs = {
-    Skins = tabGroups.MainGroup:Tab({ Name = "Weapons", Image = "rbxassetid://11963373994" }),
-    Settings = tabGroups.MainGroup:Tab({ Name = "Settings", Image = "rbxassetid://10734950309" })
+    Skins    = tabGroups.MainGroup:Tab({ Name = "Weapons",  Image = "rbxassetid://11963373994" }),
+    Settings = tabGroups.MainGroup:Tab({ Name = "Settings", Image = "rbxassetid://10734950309" }),
 }
 
 local sections = {
-    SkinsLeft = tabs.Skins:Section({ Side = "Left" }),
+    SkinsLeft  = tabs.Skins:Section({ Side = "Left"  }),
     SkinsRight = tabs.Skins:Section({ Side = "Right" }),
-    Config = tabs.Settings:Section({ Side = "Left" }),
-    Profiles = tabs.Settings:Section({ Side = "Right" })
+    Config     = tabs.Settings:Section({ Side = "Left"  }),
+    Profiles   = tabs.Settings:Section({ Side = "Right" }),
 }
 
 local UI_Dropdowns = {}
-
--- Setup Weapons in Left/Right columns
 local halfPoint = math.ceil(#WeaponList / 2)
 
 for i, weaponName in ipairs(WeaponList) do
-    local availableSkins = SkinLists[weaponName] or {"Default"}
-    local currentSkin = EquippedSkins[weaponName] or "Default"
-    
-    local targetSection = (i <= halfPoint) and sections.SkinsLeft or sections.SkinsRight
-
+    local availableSkins = SkinLists[weaponName] or { "Default" }
+    local currentSkin    = EquippedSkins[weaponName] or "Default"
+    local targetSection  = (i <= halfPoint) and sections.SkinsLeft or sections.SkinsRight
     UI_Dropdowns[weaponName] = targetSection:Dropdown({
-        Name = weaponName,
-        Options = availableSkins,
-        Default = currentSkin,
+        Name     = weaponName,
+        Options  = availableSkins,
+        Default  = currentSkin,
         Callback = function(Option)
             local selected = type(Option) == "table" and Option[1] or Option
             applyEquippedSkin(weaponName, selected)
@@ -422,24 +573,22 @@ for i, weaponName in ipairs(WeaponList) do
     })
 end
 
--- ── UI: Config ────────────────────────────────────────────────────────
-
+-- Config tab
 sections.Config:Header({ Name = "General Config" })
 
 sections.Config:Keybind({
-    Name = "Toggle Menu Bind",
+    Name    = "Toggle Menu Bind",
     Default = savedKeybind,
     Callback = function(key)
         MasterData.Settings.ToggleKey = key.Name
         saveMasterData()
         pcall(function() Window:SetKeybind(key) end)
-        
         Window:Notify({
-            Title = "Keybind Saved",
+            Title       = "Keybind Saved",
             Description = "Menu toggle is now " .. key.Name,
-            Lifetime = 3
+            Lifetime    = 3,
         })
-    end
+    end,
 })
 
 sections.Config:Button({
@@ -452,25 +601,24 @@ sections.Config:Button({
             end
         end
         Window:Notify({
-            Title = "Loadout Cleared",
+            Title       = "Loadout Cleared",
             Description = "Reverted current skins to Default.",
-            Lifetime = 3
+            Lifetime    = 3,
         })
     end,
 })
 
--- ── UI: Profile System ────────────────────────────────────────────────
-
+-- Profiles tab
 sections.Profiles:Header({ Name = "Presets" })
 
 local ProfileNameInput = ""
 sections.Profiles:Input({
-    Name = "Profile Name",
-    Placeholder = "Enter name to save...",
+    Name               = "Profile Name",
+    Placeholder        = "Enter name to save...",
     AcceptedCharacters = "All",
     Callback = function(val)
         ProfileNameInput = val
-    end
+    end,
 })
 
 local function getProfileList()
@@ -481,12 +629,12 @@ end
 
 local SelectedProfileAction = MasterData.CurrentProfile
 local UI_ProfileDropdown = sections.Profiles:Dropdown({
-    Name = "Select Profile",
+    Name    = "Select Profile",
     Options = getProfileList(),
     Default = MasterData.CurrentProfile,
     Callback = function(val)
         SelectedProfileAction = type(val) == "table" and val[1] or val
-    end
+    end,
 })
 
 sections.Profiles:Button({
@@ -499,18 +647,16 @@ sections.Profiles:Button({
         end
         MasterData.CurrentProfile = name
         saveMasterData()
-        
         pcall(function()
             UI_ProfileDropdown:SetOptions(getProfileList())
             UI_ProfileDropdown:Set(name)
         end)
-        
         Window:Notify({
-            Title = "Profile Saved",
+            Title       = "Profile Saved",
             Description = "Saved loadout to " .. name,
-            Lifetime = 3
+            Lifetime    = 3,
         })
-    end
+    end,
 })
 
 sections.Profiles:Button({
@@ -518,26 +664,22 @@ sections.Profiles:Button({
     Callback = function()
         local target = SelectedProfileAction
         if not MasterData.Profiles[target] then return end
-        
         MasterData.CurrentProfile = target
         EquippedSkins = {}
-        
         for w in pairs(SkinLists) do
             local savedSkin = MasterData.Profiles[target][w] or "Default"
             applyEquippedSkin(w, savedSkin)
-            
             if UI_Dropdowns[w] then
                 pcall(function() UI_Dropdowns[w]:Set(savedSkin) end)
             end
         end
         saveMasterData()
-        
         Window:Notify({
-            Title = "Profile Loaded",
+            Title       = "Profile Loaded",
             Description = "Equipped preset: " .. target,
-            Lifetime = 3
+            Lifetime    = 3,
         })
-    end
+    end,
 })
 
 sections.Profiles:Button({
@@ -545,26 +687,34 @@ sections.Profiles:Button({
     Callback = function()
         local target = SelectedProfileAction
         if target == "Default" then
-            Window:Notify({ Title = "Error", Description = "Cannot delete Default profile.", Lifetime = 3 })
+            Window:Notify({
+                Title       = "Error",
+                Description = "Cannot delete Default profile.",
+                Lifetime    = 3,
+            })
             return
         end
         if MasterData.Profiles[target] then
             MasterData.Profiles[target] = nil
-            if MasterData.CurrentProfile == target then MasterData.CurrentProfile = "Default" end
+            if MasterData.CurrentProfile == target then
+                MasterData.CurrentProfile = "Default"
+            end
             saveMasterData()
-            
             pcall(function()
                 UI_ProfileDropdown:SetOptions(getProfileList())
                 UI_ProfileDropdown:Set(MasterData.CurrentProfile)
             end)
-            
-            Window:Notify({ Title = "Profile Deleted", Description = target .. " has been removed.", Lifetime = 3 })
+            Window:Notify({
+                Title       = "Profile Deleted",
+                Description = target .. " has been removed.",
+                Lifetime    = 3,
+            })
         end
-    end
+    end,
 })
 
 Window:Notify({
-    Title = "Ready",
+    Title       = "Ready",
     Description = "Script injected. Press " .. savedKeybind.Name .. " to toggle menu.",
-    Lifetime = 5
+    Lifetime    = 5,
 })
