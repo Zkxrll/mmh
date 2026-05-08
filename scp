@@ -1,66 +1,180 @@
-task.wait(1)
+-- ══════════════════════════════════════════════════════════════
+-- ACB PATCH — Potassium edition
+-- Strategy: getscriptclosure → walk proto tree via getprotos →
+--           sweep GC via getgc → replace task upvalues in-place
+--           + kill existing RunService connections
+-- ══════════════════════════════════════════════════════════════
 
 local _acbPatched = false
+local _REAL_TASK  = task -- keep reference before anything touches it
 
-local function applyACBPatch()
-    for _, s in ipairs(getrunningscripts()) do
-        if s.Name:find("MiscellaneousController") then
-            local env = getsenv(s)
-            if not env or not env.task then continue end
-            if _acbPatched then break end
+local DEAD_TASK = {
+    wait          = function() return 0 end,
+    spawn         = function() return nil end,
+    defer         = function() return nil end,
+    delay         = function() return nil end,
+    cancel        = function() return nil end,
+    synchronize   = function() return nil end,
+    desynchronize = function() return nil end,
+}
 
-            local t = {}
-            for k, v in pairs(task) do t[k] = v end
+local DEAD_RS = setmetatable({}, {
+    __index = function(_, k)
+        return {
+            Connect  = function() return { Disconnect = function() end, Connected = false } end,
+            Wait     = function() return 0 end,
+            Once     = function() return { Disconnect = function() end } end,
+        }
+    end,
+    __newindex = function() end,
+})
 
-            local _acbThreads = {}
+-- Walk the prototype tree of a function recursively
+-- getprotos(fn) returns array of inner function prototypes per Potassium docs
+local function walkProtos(fn, out, seen)
+    if type(fn) ~= "function" then return end
+    if seen[fn] then return end
+    seen[fn] = true
+    table.insert(out, fn)
 
-            t.spawn = function(fn, ...)
-                return task.spawn(function(...)
-                    _acbThreads[coroutine.running()] = true
-                    fn(...)
-                end, ...)
-            end
-
-            t.defer = function(fn, ...)
-                return task.defer(function(...)
-                    _acbThreads[coroutine.running()] = true
-                    fn(...)
-                end, ...)
-            end
-
-            t.delay = function(n, fn, ...)
-                return task.delay(n, function(...)
-                    _acbThreads[coroutine.running()] = true
-                    fn(...)
-                end, ...)
-            end
-
-            t.wait = function(n, ...)
-                local co = coroutine.running()
-                -- Only kill waits from tagged ACB coroutines, never from require/scheduler
-                if co and _acbThreads[co] then
-                    _acbThreads[co] = nil
-                    error("__stop", 0)
-                end
-                return task.wait(n, ...)
-            end
-
-            env.task = t
-            _acbPatched = true
-            break
-        end
+    local ok, protos = pcall(getprotos, fn)
+    if not ok or type(protos) ~= "table" then return end
+    for _, p in ipairs(protos) do
+        walkProtos(p, out, seen)
     end
 end
 
--- Retry loop: keeps trying until MiscellaneousController is found
--- Eliminates the 1/3 race condition from injection timing
-task.spawn(function()
-    for attempt = 1, 60 do
-        if _acbPatched then break end
-        pcall(applyACBPatch)
-        if not _acbPatched then
-            task.wait(0.1)
+-- Check if a function belongs to a specific script instance via getfenv
+local function fnBelongsToScript(fn, scr)
+    local ok, env = pcall(getfenv, fn)
+    if not ok or type(env) ~= "table" then return false end
+    return rawget(env, "script") == scr
+end
+
+-- Patch all task/RunService upvalues in a function
+local function patchFn(fn)
+    local ok, ups = pcall(getupvalues, fn)
+    if not ok or type(ups) ~= "table" then return 0 end
+
+    local count = 0
+    for i, v in pairs(ups) do
+        if v == _REAL_TASK then
+            if pcall(setupvalue, fn, i, DEAD_TASK) then
+                count += 1
+            end
         end
+        -- Also catch captured RunService
+        if type(v) == "userdata" then
+            local ok2, name = pcall(function() return v.ClassName end)
+            if ok2 and name == "RunService" then
+                pcall(setupvalue, fn, i, DEAD_RS)
+                count += 1
+            end
+        end
+    end
+    return count
+end
+
+local function nukeACScript(scr)
+    -- 1. Patch env-level task (covers any global lookup that wasn't upvalue-captured)
+    local env = getsenv(scr)
+    if env and type(env) == "table" then
+        rawset(env, "task", DEAD_TASK)
+    end
+
+    -- 2. Get main chunk closure
+    local ok, main = pcall(getscriptclosure, scr)
+    if not ok or type(main) ~= "function" then
+        warn("[ACB] getscriptclosure failed:", main)
+        return false
+    end
+
+    -- 3. Walk entire proto tree from main chunk
+    local allFns = {}
+    local seen   = {}
+    walkProtos(main, allFns, seen)
+
+    -- 4. Sweep GC for any closures already instantiated from this script
+    --    getgc(true) returns all live objects including functions per Potassium docs
+    if getgc then
+        local ok2, gc = pcall(getgc, true)
+        if ok2 and type(gc) == "table" then
+            for _, obj in ipairs(gc) do
+                if type(obj) == "function" and not seen[obj] then
+                    if fnBelongsToScript(obj, scr) then
+                        seen[obj] = true
+                        table.insert(allFns, obj)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 5. Patch upvalues in everything we found
+    local totalPatched = 0
+    for _, fn in ipairs(allFns) do
+        totalPatched += patchFn(fn)
+    end
+
+    -- 6. Kill already-registered RunService connections from this script
+    local totalKilled = 0
+    if getconnections then
+        local RS      = game:GetService("RunService")
+        local signals = { RS.Heartbeat, RS.Stepped, RS.RenderStepped }
+
+        for _, sig in ipairs(signals) do
+            local ok3, conns = pcall(getconnections, sig)
+            if not ok3 or type(conns) ~= "table" then continue end
+
+            for _, conn in ipairs(conns) do
+                local fn
+                pcall(function() fn = conn.Function end)
+                if type(fn) ~= "function" then continue end
+
+                -- check if this connection's function belongs to the AC script
+                if fnBelongsToScript(fn, scr) or seen[fn] then
+                    -- Disable is softer than Disconnect — less server-side noise
+                    if conn.Disable then
+                        pcall(function() conn:Disable() end)
+                    else
+                        pcall(function() conn:Disconnect() end)
+                    end
+                    totalKilled += 1
+                end
+            end
+        end
+    end
+
+    print(("[ACB] Done — fns=%d patched=%d conns_killed=%d")
+        :format(#allFns, totalPatched, totalKilled))
+
+    return true
+end
+
+-- Retry loop — MiscellaneousController loads async, timing varies
+_REAL_TASK.spawn(function()
+    for attempt = 1, 80 do
+        if _acbPatched then break end
+
+        for _, s in ipairs(getrunningscripts()) do
+            if s.Name:find("MiscellaneousController") then
+                local ok, err = pcall(nukeACScript, s)
+                if ok then
+                    _acbPatched = true
+                else
+                    warn("[ACB] nukeACScript error:", err)
+                end
+                break
+            end
+        end
+
+        if not _acbPatched then
+            _REAL_TASK.wait(0.25)
+        end
+    end
+
+    if not _acbPatched then
+        warn("[ACB] Failed to patch MiscellaneousController after 80 attempts")
     end
 end)
 
@@ -101,9 +215,9 @@ local function loadMasterData()
     if ok and raw and raw ~= "" then
         local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok2 and type(decoded) == "table" then
-            if decoded.Settings     then MasterData.Settings       = decoded.Settings       end
-            if decoded.Profiles     then MasterData.Profiles       = decoded.Profiles       end
-            if decoded.CurrentProfile then MasterData.CurrentProfile = decoded.CurrentProfile end
+            if decoded.Settings       then MasterData.Settings        = decoded.Settings       end
+            if decoded.Profiles       then MasterData.Profiles        = decoded.Profiles       end
+            if decoded.CurrentProfile then MasterData.CurrentProfile  = decoded.CurrentProfile end
         end
     end
 end
@@ -264,7 +378,6 @@ local function _applyHooks()
     if _hooksApplied then return end
     _hooksApplied = true
 
-    -- Ownership bypass
     if CosmeticLibrary then
         CosmeticLibrary.OwnsCosmeticNormally     = function() return true end
         CosmeticLibrary.OwnsCosmeticUniversally  = function() return true end
@@ -281,7 +394,6 @@ local function _applyHooks()
         end
     end
 
-    -- ViewModel skin injection
     if ClientItem and ClientItem._CreateViewModel then
         local _o = ClientItem._CreateViewModel
         ClientItem._CreateViewModel = function(self, vmRef)
@@ -313,7 +425,6 @@ local function _applyHooks()
         end
     end
 
-    -- Wrap hook
     if ClientViewModelModule then
         if ClientViewModelModule.GetWrap then
             local _o = ClientViewModelModule.GetWrap
@@ -380,7 +491,6 @@ local function _applyHooks()
         end
     end
 
-    -- DataController inventory + weapon data bypass
     if DataController then
         local _og = DataController.Get
         local _inv = setmetatable({}, {
@@ -427,8 +537,6 @@ end
 
 -- ══════════════════════════════════════════════════════════════
 -- MODULE LOADER
--- Fixed: cache intermediate WaitForChild results,
---        no duplicate yields, safe nil checks before require
 -- ══════════════════════════════════════════════════════════════
 task.spawn(function()
     local Mods = ReplicatedStorage:WaitForChild("Modules", 20)
@@ -442,8 +550,6 @@ task.spawn(function()
     pcall(function() ReplicatedClass = require(Mods:WaitForChild("ReplicatedClass", 15)) end)
     pcall(function() EnumLibrary     = require(Mods:WaitForChild("EnumLibrary",     15)) end)
 
-    -- Fixed: cache ClientFighter and ClientItem so WaitForChild
-    -- is only called once per node, not once per module
     pcall(function()
         local CIF = PSMods:WaitForChild("ClientReplicatedClasses", 15)
         if not CIF then return end
@@ -453,9 +559,7 @@ task.spawn(function()
         if not CItemInst then return end
         ClientItem = require(CItemInst)
         local CVMInst = CItemInst:WaitForChild("ClientViewModel", 15)
-        if CVMInst then
-            ClientViewModelModule = require(CVMInst)
-        end
+        if CVMInst then ClientViewModelModule = require(CVMInst) end
     end)
 
     pcall(function()
@@ -490,9 +594,7 @@ task.spawn(function()
                     if lobbyCosmetics[wn] then
                         lobbyCosmetics[wn][tostring(ct)] = nil
                         if iw then lobbyCosmetics[wn].Wrap = nil end
-                        if not next(lobbyCosmetics[wn]) then
-                            lobbyCosmetics[wn] = nil
-                        end
+                        if not next(lobbyCosmetics[wn]) then lobbyCosmetics[wn] = nil end
                     end
                 else
                     if CosmeticLibrary and CosmeticLibrary.Cosmetics then
@@ -529,8 +631,7 @@ if not success or type(MacLib) ~= "table" then
     return
 end
 
-local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey]
-    or Enum.KeyCode.RightControl
+local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = MacLib:Window({
     Title                  = "Rivals Skin Changer",
@@ -575,7 +676,6 @@ for i, weaponName in ipairs(WeaponList) do
     })
 end
 
--- Config tab
 sections.Config:Header({ Name = "General Config" })
 
 sections.Config:Keybind({
@@ -585,11 +685,7 @@ sections.Config:Keybind({
         MasterData.Settings.ToggleKey = key.Name
         saveMasterData()
         pcall(function() Window:SetKeybind(key) end)
-        Window:Notify({
-            Title       = "Keybind Saved",
-            Description = "Menu toggle is now " .. key.Name,
-            Lifetime    = 3,
-        })
+        Window:Notify({ Title = "Keybind Saved", Description = "Menu toggle is now " .. key.Name, Lifetime = 3 })
     end,
 })
 
@@ -598,19 +694,12 @@ sections.Config:Button({
     Callback = function()
         for w in pairs(EquippedSkins) do
             applyEquippedSkin(w, "Default")
-            if UI_Dropdowns[w] then
-                pcall(function() UI_Dropdowns[w]:Set("Default") end)
-            end
+            if UI_Dropdowns[w] then pcall(function() UI_Dropdowns[w]:Set("Default") end) end
         end
-        Window:Notify({
-            Title       = "Loadout Cleared",
-            Description = "Reverted current skins to Default.",
-            Lifetime    = 3,
-        })
+        Window:Notify({ Title = "Loadout Cleared", Description = "Reverted current skins to Default.", Lifetime = 3 })
     end,
 })
 
--- Profiles tab
 sections.Profiles:Header({ Name = "Presets" })
 
 local ProfileNameInput = ""
@@ -618,9 +707,7 @@ sections.Profiles:Input({
     Name               = "Profile Name",
     Placeholder        = "Enter name to save...",
     AcceptedCharacters = "All",
-    Callback = function(val)
-        ProfileNameInput = val
-    end,
+    Callback = function(val) ProfileNameInput = val end,
 })
 
 local function getProfileList()
@@ -644,20 +731,14 @@ sections.Profiles:Button({
     Callback = function()
         local name = (ProfileNameInput ~= "") and ProfileNameInput or "Default"
         MasterData.Profiles[name] = {}
-        for w, s in pairs(EquippedSkins) do
-            MasterData.Profiles[name][w] = s
-        end
+        for w, s in pairs(EquippedSkins) do MasterData.Profiles[name][w] = s end
         MasterData.CurrentProfile = name
         saveMasterData()
         pcall(function()
             UI_ProfileDropdown:SetOptions(getProfileList())
             UI_ProfileDropdown:Set(name)
         end)
-        Window:Notify({
-            Title       = "Profile Saved",
-            Description = "Saved loadout to " .. name,
-            Lifetime    = 3,
-        })
+        Window:Notify({ Title = "Profile Saved", Description = "Saved loadout to " .. name, Lifetime = 3 })
     end,
 })
 
@@ -671,16 +752,10 @@ sections.Profiles:Button({
         for w in pairs(SkinLists) do
             local savedSkin = MasterData.Profiles[target][w] or "Default"
             applyEquippedSkin(w, savedSkin)
-            if UI_Dropdowns[w] then
-                pcall(function() UI_Dropdowns[w]:Set(savedSkin) end)
-            end
+            if UI_Dropdowns[w] then pcall(function() UI_Dropdowns[w]:Set(savedSkin) end) end
         end
         saveMasterData()
-        Window:Notify({
-            Title       = "Profile Loaded",
-            Description = "Equipped preset: " .. target,
-            Lifetime    = 3,
-        })
+        Window:Notify({ Title = "Profile Loaded", Description = "Equipped preset: " .. target, Lifetime = 3 })
     end,
 })
 
@@ -689,28 +764,18 @@ sections.Profiles:Button({
     Callback = function()
         local target = SelectedProfileAction
         if target == "Default" then
-            Window:Notify({
-                Title       = "Error",
-                Description = "Cannot delete Default profile.",
-                Lifetime    = 3,
-            })
+            Window:Notify({ Title = "Error", Description = "Cannot delete Default profile.", Lifetime = 3 })
             return
         end
         if MasterData.Profiles[target] then
             MasterData.Profiles[target] = nil
-            if MasterData.CurrentProfile == target then
-                MasterData.CurrentProfile = "Default"
-            end
+            if MasterData.CurrentProfile == target then MasterData.CurrentProfile = "Default" end
             saveMasterData()
             pcall(function()
                 UI_ProfileDropdown:SetOptions(getProfileList())
                 UI_ProfileDropdown:Set(MasterData.CurrentProfile)
             end)
-            Window:Notify({
-                Title       = "Profile Deleted",
-                Description = target .. " has been removed.",
-                Lifetime    = 3,
-            })
+            Window:Notify({ Title = "Profile Deleted", Description = target .. " has been removed.", Lifetime = 3 })
         end
     end,
 })
