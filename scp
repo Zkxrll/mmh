@@ -1,12 +1,5 @@
--- ══════════════════════════════════════════════════════════════
--- ACB PATCH — Potassium edition
--- Strategy: getscriptclosure → walk proto tree via getprotos →
---           sweep GC via getgc → replace task upvalues in-place
---           + kill existing RunService connections
--- ══════════════════════════════════════════════════════════════
-
 local _acbPatched = false
-local _REAL_TASK  = task -- keep reference before anything touches it
+local _REAL_TASK  = task
 
 local DEAD_TASK = {
     wait          = function() return 0 end,
@@ -29,8 +22,6 @@ local DEAD_RS = setmetatable({}, {
     __newindex = function() end,
 })
 
--- Walk the prototype tree of a function recursively
--- getprotos(fn) returns array of inner function prototypes per Potassium docs
 local function walkProtos(fn, out, seen)
     if type(fn) ~= "function" then return end
     if seen[fn] then return end
@@ -44,14 +35,12 @@ local function walkProtos(fn, out, seen)
     end
 end
 
--- Check if a function belongs to a specific script instance via getfenv
 local function fnBelongsToScript(fn, scr)
     local ok, env = pcall(getfenv, fn)
     if not ok or type(env) ~= "table" then return false end
     return rawget(env, "script") == scr
 end
 
--- Patch all task/RunService upvalues in a function
 local function patchFn(fn)
     local ok, ups = pcall(getupvalues, fn)
     if not ok or type(ups) ~= "table" then return 0 end
@@ -63,7 +52,6 @@ local function patchFn(fn)
                 count += 1
             end
         end
-        -- Also catch captured RunService
         if type(v) == "userdata" then
             local ok2, name = pcall(function() return v.ClassName end)
             if ok2 and name == "RunService" then
@@ -76,26 +64,21 @@ local function patchFn(fn)
 end
 
 local function nukeACScript(scr)
-    -- 1. Patch env-level task (covers any global lookup that wasn't upvalue-captured)
     local env = getsenv(scr)
     if env and type(env) == "table" then
         rawset(env, "task", DEAD_TASK)
     end
 
-    -- 2. Get main chunk closure
     local ok, main = pcall(getscriptclosure, scr)
     if not ok or type(main) ~= "function" then
         warn("[ACB] getscriptclosure failed:", main)
         return false
     end
 
-    -- 3. Walk entire proto tree from main chunk
     local allFns = {}
     local seen   = {}
     walkProtos(main, allFns, seen)
 
-    -- 4. Sweep GC for any closures already instantiated from this script
-    --    getgc(true) returns all live objects including functions per Potassium docs
     if getgc then
         local ok2, gc = pcall(getgc, true)
         if ok2 and type(gc) == "table" then
@@ -110,13 +93,11 @@ local function nukeACScript(scr)
         end
     end
 
-    -- 5. Patch upvalues in everything we found
     local totalPatched = 0
     for _, fn in ipairs(allFns) do
         totalPatched += patchFn(fn)
     end
 
-    -- 6. Kill already-registered RunService connections from this script
     local totalKilled = 0
     if getconnections then
         local RS      = game:GetService("RunService")
@@ -131,9 +112,7 @@ local function nukeACScript(scr)
                 pcall(function() fn = conn.Function end)
                 if type(fn) ~= "function" then continue end
 
-                -- check if this connection's function belongs to the AC script
                 if fnBelongsToScript(fn, scr) or seen[fn] then
-                    -- Disable is softer than Disconnect — less server-side noise
                     if conn.Disable then
                         pcall(function() conn:Disable() end)
                     else
@@ -151,7 +130,6 @@ local function nukeACScript(scr)
     return true
 end
 
--- Retry loop — MiscellaneousController loads async, timing varies
 _REAL_TASK.spawn(function()
     for attempt = 1, 80 do
         if _acbPatched then break end
@@ -178,15 +156,9 @@ _REAL_TASK.spawn(function()
     end
 end)
 
--- ══════════════════════════════════════════════════════════════
--- GAME GUARD
--- ══════════════════════════════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
-if game.GameId ~= 6035872082 then warn("[SC] Wrong game"); return end
+if game.GameId ~= 6035872082 then warn("Wrong game"); return end
 
--- ══════════════════════════════════════════════════════════════
--- SERVICES
--- ══════════════════════════════════════════════════════════════
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService       = game:GetService("HttpService")
@@ -195,10 +167,7 @@ local UserInputService  = game:GetService("UserInputService")
 local LocalPlayer       = Players.LocalPlayer
 local PlayerScripts     = LocalPlayer:WaitForChild("PlayerScripts", 15)
 
--- ══════════════════════════════════════════════════════════════
--- PERSISTENCE
--- ══════════════════════════════════════════════════════════════
-local SAVE_FILE = "rivals_sc_master.json"
+local SAVE_FILE = "ZkxsChanger.json"
 
 local MasterData = {
     Settings = { ToggleKey = "RightControl" },
@@ -224,9 +193,8 @@ end
 
 loadMasterData()
 
--- ══════════════════════════════════════════════════════════════
--- STATE
--- ══════════════════════════════════════════════════════════════
+
+-- State
 local EquippedSkins = {}
 if MasterData.Profiles[MasterData.CurrentProfile] then
     for w, s in pairs(MasterData.Profiles[MasterData.CurrentProfile]) do
@@ -235,9 +203,7 @@ if MasterData.Profiles[MasterData.CurrentProfile] then
 end
 local lobbyCosmetics = {}
 
--- ══════════════════════════════════════════════════════════════
--- SKIN LISTS
--- ══════════════════════════════════════════════════════════════
+-- Skin list
 local SkinLists = {
     ["Assault Rifle"]     = {"Default","AK-47","AUG","Tommy Gun","Boneclaw Rifle","Gingerbread AUG","AKEY-47","10B Visits","Phoenix Rifle","Glorious Assault Rifle"},
     ["Battle Axe"]        = {"Default","The Shred","Ban Axe","Cerulean Axe","Balloon Axe","Nordic Axe","Keyttle Axe","Caladbolg","Street Sign","Glorious Battle Axe"},
@@ -293,9 +259,7 @@ local WeaponList = {}
 for w in pairs(SkinLists) do table.insert(WeaponList, w) end
 table.sort(WeaponList, function(a, b) return a:lower() < b:lower() end)
 
--- ══════════════════════════════════════════════════════════════
--- CORE STATE & CACHES
--- ══════════════════════════════════════════════════════════════
+-- Core state n caches
 local CosmeticLibrary, ItemLibrary, ReplicatedClass, DataController
 local ClientItem, ClientViewModelModule, EnumLibrary
 local _constructingWeapon = nil
@@ -305,9 +269,7 @@ local _cosmeticLookup     = nil
 local _wrapDebounces      = {}
 local _wdCache            = {}
 
--- ══════════════════════════════════════════════════════════════
--- COSMETIC HELPERS
--- ══════════════════════════════════════════════════════════════
+-- Cos helpers
 local function _ensureLookup()
     if _cosmeticLookup or not CosmeticLibrary or not CosmeticLibrary.Cosmetics then return end
     _cosmeticLookup = {}
@@ -371,9 +333,7 @@ local function applyEquippedSkin(wType, skinName)
     saveMasterData()
 end
 
--- ══════════════════════════════════════════════════════════════
--- HOOKS
--- ══════════════════════════════════════════════════════════════
+-- Hooks
 local function _applyHooks()
     if _hooksApplied then return end
     _hooksApplied = true
@@ -535,9 +495,7 @@ local function _applyHooks()
     end
 end
 
--- ══════════════════════════════════════════════════════════════
--- MODULE LOADER
--- ══════════════════════════════════════════════════════════════
+-- Load modules
 task.spawn(function()
     local Mods = ReplicatedStorage:WaitForChild("Modules", 20)
     if not Mods then return end
@@ -571,9 +529,7 @@ task.spawn(function()
     _applyHooks()
 end)
 
--- ══════════════════════════════════════════════════════════════
--- NAMECALL HOOK — lobby cosmetic tracking + kick block
--- ══════════════════════════════════════════════════════════════
+-- Namecall hook n track kick
 task.spawn(function()
     if not (hookmetamethod and newcclosure and getnamecallmethod) then return end
     local old
@@ -617,9 +573,7 @@ task.spawn(function()
     end))
 end)
 
--- ══════════════════════════════════════════════════════════════
--- UI — MACLIB
--- ══════════════════════════════════════════════════════════════
+-- Lib (maclib)
 local success, MacLib = pcall(function()
     return loadstring(game:HttpGet(
         "https://raw.githubusercontent.com/biggaboy212/Public-Resources/main/MacLib/maclib.lua"
@@ -634,7 +588,7 @@ end
 local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = MacLib:Window({
-    Title                  = "Rivals Skin Changer",
+    Title                  = "Zkx's Skin Changer",
     Subtitle               = "Maclib Edition",
     Size                   = UDim2.new(0, 700, 0, 420),
     DragStyle              = 1,
