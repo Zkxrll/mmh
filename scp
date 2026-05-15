@@ -1,159 +1,47 @@
-local _acbPatched = false
-local _REAL_TASK  = task
-
-local DEAD_TASK = {
-    wait          = function() return 0 end,
-    spawn         = function() return nil end,
-    defer         = function() return nil end,
-    delay         = function() return nil end,
-    cancel        = function() return nil end,
-    synchronize   = function() return nil end,
-    desynchronize = function() return nil end,
-}
-
-local DEAD_RS = setmetatable({}, {
-    __index = function(_, k)
-        return {
-            Connect  = function() return { Disconnect = function() end, Connected = false } end,
-            Wait     = function() return 0 end,
-            Once     = function() return { Disconnect = function() end } end,
-        }
-    end,
-    __newindex = function() end,
-})
-
-local function walkProtos(fn, out, seen)
-    if type(fn) ~= "function" then return end
-    if seen[fn] then return end
-    seen[fn] = true
-    table.insert(out, fn)
-
-    local ok, protos = pcall(getprotos, fn)
-    if not ok or type(protos) ~= "table" then return end
-    for _, p in ipairs(protos) do
-        walkProtos(p, out, seen)
-    end
-end
-
-local function fnBelongsToScript(fn, scr)
-    local ok, env = pcall(getfenv, fn)
-    if not ok or type(env) ~= "table" then return false end
-    return rawget(env, "script") == scr
-end
-
-local function patchFn(fn)
-    local ok, ups = pcall(getupvalues, fn)
-    if not ok or type(ups) ~= "table" then return 0 end
-
-    local count = 0
-    for i, v in pairs(ups) do
-        if v == _REAL_TASK then
-            if pcall(setupvalue, fn, i, DEAD_TASK) then
-                count += 1
-            end
-        end
-        if type(v) == "userdata" then
-            local ok2, name = pcall(function() return v.ClassName end)
-            if ok2 and name == "RunService" then
-                pcall(setupvalue, fn, i, DEAD_RS)
-                count += 1
+task.spawn(function()
+    -- Cancel AC threads
+    local i = 0
+    for _, v in getgc() do
+        i += 1
+        if i % 200 == 0 then task.wait() end
+        if typeof(v) == "thread" then
+            local ok, src = pcall(debug.info, v, 1, "s")
+            if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
+                pcall(task.cancel, v)
             end
         end
     end
-    return count
-end
 
-local function nukeACScript(scr)
-    local env = getsenv(scr)
-    if env and type(env) == "table" then
-        rawset(env, "task", DEAD_TASK)
+    -- Hook AC functions
+    i = 0
+    for _, v in getgc() do
+        i += 1
+        if i % 200 == 0 then task.wait() end
+        if typeof(v) == "function" then
+            local ok, src = pcall(debug.info, v, "s")
+            if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
+                pcall(hookfunction, v, newcclosure(function() return task.wait(9e9) end))
+            end
+        end
     end
 
-    local ok, main = pcall(getscriptclosure, scr)
-    if not ok or type(main) ~= "function" then
-        warn("[ACB] getscriptclosure failed:", main)
-        return false
-    end
-
-    local allFns = {}
-    local seen   = {}
-    walkProtos(main, allFns, seen)
-
-    if getgc then
-        local ok2, gc = pcall(getgc, true)
-        if ok2 and type(gc) == "table" then
-            for _, obj in ipairs(gc) do
-                if type(obj) == "function" and not seen[obj] then
-                    if fnBelongsToScript(obj, scr) then
-                        seen[obj] = true
-                        table.insert(allFns, obj)
-                    end
+    -- Null the remote
+    local ok, remote = pcall(function()
+        return game:GetService("ReplicatedStorage")
+            .Remotes.AnalyticsPipeline.RemoteEvent.OnClientEvent
+    end)
+    if ok and remote then
+        local ok2, conns = pcall(getconnections, remote)
+        if ok2 then
+            for _, v in ipairs(conns) do
+                if v.Function then
+                    pcall(hookfunction, v.Function, newcclosure(function() end))
                 end
             end
         end
     end
 
-    local totalPatched = 0
-    for _, fn in ipairs(allFns) do
-        totalPatched += patchFn(fn)
-    end
-
-    local totalKilled = 0
-    if getconnections then
-        local RS      = game:GetService("RunService")
-        local signals = { RS.Heartbeat, RS.Stepped, RS.RenderStepped }
-
-        for _, sig in ipairs(signals) do
-            local ok3, conns = pcall(getconnections, sig)
-            if not ok3 or type(conns) ~= "table" then continue end
-
-            for _, conn in ipairs(conns) do
-                local fn
-                pcall(function() fn = conn.Function end)
-                if type(fn) ~= "function" then continue end
-
-                if fnBelongsToScript(fn, scr) or seen[fn] then
-                    if conn.Disable then
-                        pcall(function() conn:Disable() end)
-                    else
-                        pcall(function() conn:Disconnect() end)
-                    end
-                    totalKilled += 1
-                end
-            end
-        end
-    end
-
-    print(("[ACB] Done — fns=%d patched=%d conns_killed=%d")
-        :format(#allFns, totalPatched, totalKilled))
-
-    return true
-end
-
-_REAL_TASK.spawn(function()
-    for attempt = 1, 80 do
-        if _acbPatched then break end
-
-        for _, s in ipairs(getrunningscripts()) do
-            if s.Name:find("MiscellaneousController") then
-                local ok, err = pcall(nukeACScript, s)
-                if ok then
-                    _acbPatched = true
-                else
-                    warn("[ACB] nukeACScript error:", err)
-                end
-                break
-            end
-        end
-
-        if not _acbPatched then
-            _REAL_TASK.wait(0.25)
-        end
-    end
-
-    if not _acbPatched then
-        warn("[ACB] Failed to patch MiscellaneousController after 80 attempts")
-    end
+    print("[ACB] Done")
 end)
 
 if not game:IsLoaded() then game.Loaded:Wait() end
