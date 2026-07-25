@@ -471,18 +471,124 @@ if not success or type(MacLib) ~= "table" then
     return
 end
 
+local UserInputService = game:GetService("UserInputService")
+local Players           = game:GetService("Players")
+
+-- *ViewportSize can read 0,0 for one frame on some executors right after inject; guard it*
+local camera   = workspace.CurrentCamera
+local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+if viewport.X < 1 or viewport.Y < 1 then viewport = Vector2.new(1280, 720) end
+
+-- touch-only device (no active mouse) => treat as phone/tablet and clamp hard
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+
+-- Target: never exceed ~90% of the screen. Cap desktop at the original 700x420.
+local maxW = math.floor(viewport.X * 0.90)
+local maxH = math.floor(viewport.Y * 0.90)
+local winW = math.clamp(isMobile and maxW or 700, 300, maxW)
+local winH = math.clamp(isMobile and maxH or 420, 220, maxH)
+
 local savedKeybind = Enum.KeyCode[MasterData.Settings.ToggleKey] or Enum.KeyCode.RightControl
 
 local Window = MacLib:Window({
     Title                  = "Zkx's UnlockAll",
     Subtitle               = "",
-    Size                   = UDim2.new(0, 700, 0, 420),
+    Size                   = UDim2.new(0, winW, 0, winH),
     DragStyle              = 1,
     DisabledWindowControls = {},
     ShowUserInfo           = false,
     Keybind                = savedKeybind,
-    AcrylicBlur            = true,
+    AcrylicBlur            = not isMobile, -- blur tanks FPS on phones, kill it there
 })
+
+-- ============================================================
+-- Mobile toggle button: draggable pill that opens/closes the menu.
+-- Keybinds do nothing without a keyboard, so touch users get this.
+-- ============================================================
+local menuVisible = true
+
+local function setWindowVisible(state)
+    menuVisible = state
+    -- MacLib exposes a few names across versions; try them all, fall back to gui toggle
+    local ok = pcall(function()
+        if state then Window:Open() else Window:Close() end
+    end)
+    if not ok then
+        pcall(function() Window:SetVisibility(state) end)
+    end
+    if not ok then
+        pcall(function() Window:Toggle() end)
+    end
+end
+
+local function buildToggleButton()
+    local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
+    local gui = Instance.new("ScreenGui")
+    gui.Name           = "ZkxToggleGui"
+    gui.ResetOnSpawn   = false
+    gui.IgnoreGuiInset = true
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.DisplayOrder   = 9999
+    gui.Parent         = pg
+
+    local btn = Instance.new("TextButton")
+    btn.Name              = "ToggleBtn"
+    btn.Size              = UDim2.new(0, 96, 0, 40)
+    btn.Position          = UDim2.new(0, 12, 0, 120)
+    btn.BackgroundColor3  = Color3.fromRGB(28, 28, 32)
+    btn.BackgroundTransparency = 0.15
+    btn.TextColor3        = Color3.fromRGB(240, 240, 245)
+    btn.Font              = Enum.Font.GothamBold
+    btn.TextSize          = 14
+    btn.Text              = "Hide Menu"
+    btn.AutoButtonColor   = true
+    btn.Parent            = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent       = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color        = Color3.fromRGB(80, 80, 90)
+    stroke.Thickness    = 1
+    stroke.Parent       = btn
+
+    -- Drag handling so the button never gets stuck under a notch/edge.
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging  = true
+            moved     = false
+            dragStart = input.Position
+            startPos  = btn.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - dragStart
+            if delta.Magnitude > 6 then moved = true end
+            btn.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if dragging and not moved then
+                -- treat as a tap, not a drag => toggle
+                setWindowVisible(not menuVisible)
+                btn.Text = menuVisible and "Hide Menu" or "Show Menu"
+            end
+            dragging = false
+        end
+    end)
+end
+
+pcall(buildToggleButton)
 
 local tabGroups = { MainGroup = Window:TabGroup() }
 
@@ -622,6 +728,8 @@ sections.Profiles:Button({
 
 Window:Notify({
     Title       = "Ready",
-    Description = "Script injected. Press " .. savedKeybind.Name .. " to toggle menu.",
+    Description = isMobile
+        and "Script injected. Tap the draggable button to hide/show the menu."
+        or  ("Script injected. Press " .. savedKeybind.Name .. " to toggle menu."),
     Lifetime    = 5,
 })
