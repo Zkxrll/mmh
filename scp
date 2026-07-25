@@ -2,42 +2,61 @@ task.spawn(function()
     if not game:IsLoaded() then game.Loaded:Wait() end
     if game.GameId ~= 6035872082 then warn("Wrong game"); return end
 
-    local i = 0
-    for _, v in getgc() do
-        i += 1
-        if i % 100 == 0 then task.wait() end  -- yield more often
+    task.wait() -- let the rest of the script (UI, aimbot) build before we touch anything
 
-        local t = typeof(v)
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local LogService        = game:GetService("LogService")
+    local ScriptContext     = game:GetService("ScriptContext")
 
-        if t == "thread" then
-            -- Skip dead threads entirely — no point checking or cancelling them
-            if coroutine.status(v) ~= "dead" then
-                local ok, src = pcall(debug.info, v, 1, "s")
-                if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
-                    pcall(task.cancel, v)
-                end
-            end
+    local dbginfo  = debug.info
+    local costatus = coroutine.status
+    local taskwait = task.wait
+    local clock    = os.clock
 
-        elseif t == "function" then
-            local ok, src = pcall(debug.info, v, "s")
-            if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
-                pcall(hookfunction, v, newcclosure(function() return task.wait(9e9) end))
+    -- Disable every listener on a signal (Disable where the executor supports it,
+    -- fall back to no-op'ing the handler function).
+    local function killConnections(signal)
+        local ok, conns = pcall(getconnections, signal)
+        if not ok then return end
+        for _, c in ipairs(conns) do
+            pcall(function() c:Disable() end)
+            if c.Function then
+                pcall(hookfunction, c.Function, newcclosure(function() end))
             end
         end
     end
 
-    -- Null the remote
-    local ok, remote = pcall(function()
-        return game:GetService("ReplicatedStorage")
-            .Remotes.AnalyticsPipeline.RemoteEvent.OnClientEvent
+    -- 1) Kill the analytics reporting channel.
+    pcall(function()
+        killConnections(ReplicatedStorage.Remotes.AnalyticsPipeline.RemoteEvent.OnClientEvent)
     end)
-    if ok and remote then
-        local ok2, conns = pcall(getconnections, remote)
-        if ok2 then
-            for _, conn in ipairs(conns) do
-                if conn.Function then
-                    pcall(hookfunction, conn.Function, newcclosure(function() end))
+
+    -- 2) Deafen the AC to script errors — this is what it uses to catch the
+    --    stall below and kick you, AND it hides the 30s timeout spam.
+    pcall(function() killConnections(ScriptContext.Error) end)
+
+    -- 3) Mute the log channel the AC also watches.
+    pcall(function() killConnections(LogService.MessageOut) end)
+
+    -- 4) Frame-budgeted GC sweep: STALL the AC (park it), never no-op it.
+    local BUDGET = 0.004
+    local slice  = clock()
+    for _, v in getgc(false) do
+        if clock() - slice >= BUDGET then taskwait(); slice = clock() end
+        local t = typeof(v)
+        if t == "thread" then
+            if costatus(v) ~= "dead" then
+                local ok, src = pcall(dbginfo, v, 1, "s")
+                if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
+                    pcall(task.cancel, v)
                 end
+            end
+        elseif t == "function" then
+            local ok, src = pcall(dbginfo, v, "s")
+            if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
+                -- Park the caller forever. A no-op nil-return makes it spin and
+                -- hard-freezes the client; an infinite yield just sleeps it.
+                pcall(hookfunction, v, newcclosure(function() return taskwait(9e9) end))
             end
         end
     end
@@ -459,6 +478,506 @@ task.spawn(function()
     end))
 end)
 
+-- ============================================================
+-- AIMBOT ENGINE  (main script — all logic, no UI)
+-- ============================================================
+do
+    local Players          = game:GetService("Players")
+    local RunService       = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local LocalPlayer      = Players.LocalPlayer
+
+    -- Re-run guard: kill the old loop/GUI so aimbots never stack.
+    if getgenv().ZkxAimbot and getgenv().ZkxAimbot.Cleanup then
+        pcall(getgenv().ZkxAimbot.Cleanup)
+    end
+
+    -- Shared state. The UI section flips these fields; the loop reads them.
+    local Aim = {
+        Enabled     = false,
+        Mode        = "Hold",            -- "Hold" | "Toggle" | "Always"
+        Key         = Enum.UserInputType.MouseButton2,    -- aim key (PC); mobile uses the button
+        KeyName     = "MouseButton2",
+		Listening   = false,             -- true while rebinding
+        ListenStart = 0,
+		FOV         = 120,
+        ShowFOV     = true,
+        Prediction  = 0.15,
+        MaxDistance = 1000,
+        TeamCheck   = true,
+        -- internal activation flags
+        Holding     = false,
+        Toggled     = false,
+    }
+
+    -- True when the aimbot should be actively locking this frame.
+    local function aimActive()
+        if not Aim.Enabled then return false end
+        if Aim.Mode == "Always" then return true  end
+        if Aim.Mode == "Hold"   then return Aim.Holding end
+        if Aim.Mode == "Toggle" then return Aim.Toggled end
+        return false
+    end
+
+    -- ---- FOV ring ----
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    local fovGui = Instance.new("ScreenGui")
+    fovGui.Name           = "ZkxFOV"
+    fovGui.ResetOnSpawn   = false
+    fovGui.IgnoreGuiInset = true
+    fovGui.DisplayOrder   = 9998
+    fovGui.Parent         = pg
+
+    local ring = Instance.new("Frame")
+    ring.Name                   = "Ring"
+    ring.AnchorPoint            = Vector2.new(0.5, 0.5)
+    ring.BackgroundTransparency = 1
+    ring.Size                   = UDim2.fromOffset(Aim.FOV * 2, Aim.FOV * 2)
+    ring.Visible                = false
+    ring.Parent                 = fovGui
+    local ringCorner = Instance.new("UICorner")
+    ringCorner.CornerRadius = UDim.new(1, 0)
+    ringCorner.Parent       = ring
+    local ringStroke = Instance.new("UIStroke")
+    ringStroke.Color        = Color3.fromRGB(255, 255, 255)
+    ringStroke.Thickness    = 2
+    ringStroke.Transparency = 0.25
+    ringStroke.Parent       = ring
+
+    -- ---- mobile AIM button (Hold/Toggle without a keyboard) ----
+    local aimBtnGui = Instance.new("ScreenGui")
+    aimBtnGui.Name           = "ZkxAimBtn"
+    aimBtnGui.ResetOnSpawn   = false
+    aimBtnGui.IgnoreGuiInset = true
+    aimBtnGui.DisplayOrder   = 9997
+    aimBtnGui.Parent         = pg
+
+    local aimBtn = Instance.new("TextButton")
+    aimBtn.Name              = "AimBtn"
+    aimBtn.Size              = UDim2.fromOffset(74, 74)
+    aimBtn.Position          = UDim2.new(1, -100, 0.6, 0)
+    aimBtn.BackgroundColor3  = Color3.fromRGB(28, 28, 32)
+    aimBtn.BackgroundTransparency = 0.2
+    aimBtn.TextColor3        = Color3.fromRGB(240, 240, 245)
+    aimBtn.Font              = Enum.Font.GothamBold
+    aimBtn.TextSize          = 15
+    aimBtn.Text              = "AIM"
+    aimBtn.AutoButtonColor   = false
+    aimBtn.Visible           = false
+    aimBtn.Parent            = aimBtnGui
+    local abCorner = Instance.new("UICorner")
+    abCorner.CornerRadius = UDim.new(1, 0)
+    abCorner.Parent       = aimBtn
+    local abStroke = Instance.new("UIStroke")
+    abStroke.Color     = Color3.fromRGB(80, 80, 90)
+    abStroke.Thickness = 1
+    abStroke.Parent    = aimBtn
+
+    aimBtn.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.Touch
+        and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if Aim.Mode == "Hold" then
+            Aim.Holding = true
+        elseif Aim.Mode == "Toggle" then
+            Aim.Toggled = not Aim.Toggled
+        end
+    end)
+    aimBtn.InputEnded:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.Touch
+        and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if Aim.Mode == "Hold" then
+            Aim.Holding = false
+        end
+    end)
+
+    -- ---- PC key input: hold-tracking + toggle-flip on the bound key ----
+    -- ---- input identity: normalizes keyboard keys AND mouse buttons ----
+    -- Build the mouse map dynamically: MouseButton4/5 don't exist on stock
+    -- Roblox and referencing them directly would crash, so probe first and
+    -- only add whatever the client/executor actually exposes.
+    local MOUSE_NAMES = {}
+    for _, name in ipairs({ "MouseButton1", "MouseButton2", "MouseButton3", "MouseButton4", "MouseButton5" }) do
+        local ok, enumItem = pcall(function() return Enum.UserInputType[name] end)
+        if ok and enumItem then
+            MOUSE_NAMES[enumItem] = name
+        end
+    end
+
+    local function inputIdentity(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            if input.KeyCode ~= Enum.KeyCode.Unknown then
+                return input.KeyCode, input.KeyCode.Name
+            end
+        elseif MOUSE_NAMES[input.UserInputType] then
+            return input.UserInputType, MOUSE_NAMES[input.UserInputType]
+        end
+        return nil
+    end
+    local function matchesBind(input)
+        local id = inputIdentity(input)
+        return id ~= nil and id == Aim.Key
+    end
+
+    -- ---- key/mouse input: rebind capture + hold-track + toggle-flip ----
+    local kbBegan = UserInputService.InputBegan:Connect(function(input, gpe)
+        -- rebinding: capture the next key or mouse button as the new aim bind
+        if Aim.Listening then
+            if os.clock() - Aim.ListenStart < 0.2 then return end -- skip the click that opened rebinding
+            local id, name = inputIdentity(input)
+            if id then
+                Aim.Key, Aim.KeyName, Aim.Listening = id, name, false
+                if Aim.OnRebind then pcall(Aim.OnRebind, name) end
+            end
+            return
+        end
+        -- only let gameProcessed block KEYBOARD (so typing in the menu won't fire);
+        -- mouse buttons must work even while the camera is processing them
+        if gpe and input.UserInputType == Enum.UserInputType.Keyboard then return end
+        if not matchesBind(input) then return end
+        if Aim.Mode == "Hold" then
+            Aim.Holding = true
+        elseif Aim.Mode == "Toggle" then
+            Aim.Toggled = not Aim.Toggled
+        end
+    end)
+    local kbEnded = UserInputService.InputEnded:Connect(function(input)
+        if not matchesBind(input) then return end
+        if Aim.Mode == "Hold" then
+            Aim.Holding = false
+        end
+    end)
+
+    -- ---- targeting helpers ----
+    local function getAimOrigin()
+        if UserInputService.MouseEnabled then
+            return UserInputService:GetMouseLocation()
+        end
+        local vp = workspace.CurrentCamera.ViewportSize
+        return Vector2.new(vp.X / 2, vp.Y / 2)
+    end
+
+    local function getTargetPart(char)
+        return char:FindFirstChild("Head")
+            or char:FindFirstChild("HumanoidRootPart")
+            or char.PrimaryPart
+    end
+
+    local function isValidTarget(plr)
+        if plr == LocalPlayer then return false end
+        if Aim.TeamCheck and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+            return false
+        end
+        local char = plr.Character
+        if not char then return false end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health <= 0 then return false end
+        return true
+    end
+
+    local function getClosestTarget()
+        local camera = workspace.CurrentCamera
+        local origin = getAimOrigin()
+        local camPos = camera.CFrame.Position
+        local best, bestDist, bestPredicted = nil, Aim.FOV, nil
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if isValidTarget(plr) then
+                local part = getTargetPart(plr.Character)
+                if part then
+                    local worldDist = (part.Position - camPos).Magnitude
+                    if worldDist <= Aim.MaxDistance then
+                        local predicted = part.Position + (part.AssemblyLinearVelocity * Aim.Prediction)
+                        local sp = camera:WorldToViewportPoint(predicted)
+                        if sp.Z > 0 then
+                            local screenPos  = Vector2.new(sp.X, sp.Y)
+                            local screenDist = (screenPos - origin).Magnitude
+                            if screenDist <= bestDist then
+                                best, bestDist, bestPredicted = part, screenDist, predicted
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return best, bestPredicted
+    end
+
+    -- ---- main loop ----
+    local conn = RunService.RenderStepped:Connect(function()
+        -- FOV ring follows the aim origin + slider size whenever ShowFOV is on
+        if Aim.ShowFOV and Aim.Enabled then
+            local o = getAimOrigin()
+            ring.Visible  = true
+            ring.Size     = UDim2.fromOffset(Aim.FOV * 2, Aim.FOV * 2)
+            ring.Position = UDim2.fromOffset(o.X, o.Y)
+        else
+            ring.Visible = false
+        end
+
+        -- mobile button: only relevant for Hold/Toggle while enabled
+        local wantBtn = Aim.Enabled and Aim.Mode ~= "Always"
+            and UserInputService.TouchEnabled
+        aimBtn.Visible = wantBtn
+        local on = aimActive()
+        aimBtn.BackgroundColor3 = on and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(28, 28, 32)
+
+        if not on then return end
+        local _part, predicted = getClosestTarget()
+        if predicted then
+            local camera = workspace.CurrentCamera
+            camera.CFrame = CFrame.new(camera.CFrame.Position, predicted)
+        end
+    end)
+
+    getgenv().ZkxAimbot = {
+        State   = Aim,
+        Cleanup = function()
+            if conn then conn:Disconnect() end
+            if kbBegan then kbBegan:Disconnect() end
+            if kbEnded then kbEnded:Disconnect() end
+            if fovGui then fovGui:Destroy() end
+            if aimBtnGui then aimBtnGui:Destroy() end
+        end,
+    }
+end
+
+-- ============================================================
+-- ESP ENGINE  (main script — all logic, no UI)
+-- ============================================================
+do
+    local Players    = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local LocalPlayer = Players.LocalPlayer
+
+    if getgenv().ZkxESP and getgenv().ZkxESP.Cleanup then
+        pcall(getgenv().ZkxESP.Cleanup)
+    end
+
+    local ESP = {
+        Enabled     = false,
+        Box         = true,
+        Name        = true,
+        Distance    = true,
+        HealthBar   = true,
+        Tracer      = false,
+        Chams       = true,
+        TeamCheck   = true,
+        TeamColor   = false,
+        MaxDistance = 1000,
+        Color       = Color3.fromRGB(255, 60, 60),
+    }
+
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    local gui = Instance.new("ScreenGui")
+    gui.Name           = "ZkxESP"
+    gui.ResetOnSpawn   = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder   = 9996
+    gui.Parent         = pg
+
+    local objects = {} -- [player] = { box, name, dist, hpBg, hpFill, tracer, highlight }
+
+    -- ---- helpers ----
+    local function makeFrame(parent, stroke)
+        local f = Instance.new("Frame")
+        f.BackgroundTransparency = stroke and 1 or 0
+        f.BorderSizePixel = 0
+        f.Visible = false
+        f.Parent = parent
+        if stroke then
+            local s = Instance.new("UIStroke")
+            s.Thickness = 1
+            s.Color = Color3.new(1, 1, 1)
+            s.Parent = f
+        end
+        return f
+    end
+
+    local function makeLabel(parent)
+        local t = Instance.new("TextLabel")
+        t.BackgroundTransparency = 1
+        t.Font = Enum.Font.GothamBold
+        t.TextSize = 13
+        t.TextStrokeTransparency = 0.4
+        t.TextColor3 = Color3.new(1, 1, 1)
+        t.Visible = false
+        t.Parent = parent
+        return t
+    end
+
+    local function createObjects(plr)
+        local box = makeFrame(gui, true)
+        local o = {
+            box      = box,
+            name     = makeLabel(gui),
+            dist     = makeLabel(gui),
+            hpBg     = makeFrame(gui, false),
+            hpFill   = makeFrame(gui, false),
+            tracer   = makeFrame(gui, false),
+            highlight= nil,
+        }
+        o.hpBg.BackgroundColor3   = Color3.fromRGB(0, 0, 0)
+        o.hpBg.BackgroundTransparency = 0.35
+        o.tracer.BackgroundColor3 = Color3.new(1, 1, 1)
+        o.tracer.AnchorPoint      = Vector2.new(0.5, 2)
+        return o
+    end
+
+    local function hideAll(o)
+        o.box.Visible, o.name.Visible, o.dist.Visible = false, false, false
+        o.hpBg.Visible, o.hpFill.Visible, o.tracer.Visible = false, false, false
+        if o.highlight then o.highlight.Enabled = false end
+    end
+
+    local function colorFor(plr)
+        if ESP.TeamColor and plr.Team then return plr.TeamColor.Color end
+        return ESP.Color
+    end
+
+    local function isEnemy(plr)
+        if not ESP.TeamCheck then return true end
+        if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then return false end
+        return true
+    end
+
+    -- ---- main loop ----
+    local conn = RunService.RenderStepped:Connect(function()
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+        local vp = camera.ViewportSize
+
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                local o = objects[plr]
+                if not o then o = createObjects(plr); objects[plr] = o end
+
+                local char = plr.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                local head = char and char:FindFirstChild("Head")
+
+                local show = ESP.Enabled and hrp and hum and hum.Health > 0 and isEnemy(plr)
+                if show then
+                    local camPos    = camera.CFrame.Position
+                    local worldDist = (hrp.Position - camPos).Magnitude
+                    show = worldDist <= ESP.MaxDistance
+                    if show then
+                        local col = colorFor(plr)
+                        -- project a top and bottom point for the 2D box
+                        local topW = (head and head.Position or hrp.Position) + Vector3.new(0, 1.5, 0)
+                        local botW = hrp.Position - Vector3.new(0, 3.0, 0)
+                        local top = camera:WorldToViewportPoint(topW)
+                        local bot = camera:WorldToViewportPoint(botW)
+                        if top.Z > 0 and bot.Z > 0 then
+                            local height  = math.abs(top.Y - bot.Y)
+                            local width   = height * 0.55
+                            local centerX = top.X
+                            local left    = centerX - width / 2
+                            local topY    = math.min(top.Y, bot.Y)
+
+                            -- Box
+                            if ESP.Box then
+                                o.box.Position = UDim2.fromOffset(left, topY)
+                                o.box.Size     = UDim2.fromOffset(width, height)
+                                o.box:FindFirstChildOfClass("UIStroke").Color = col
+                                o.box.Visible  = true
+                            else o.box.Visible = false end
+
+                            -- Name
+                            if ESP.Name then
+                                o.name.Text     = plr.DisplayName ~= "" and plr.DisplayName or plr.Name
+                                o.name.TextColor3 = col
+                                o.name.Size     = UDim2.fromOffset(width + 60, 16)
+                                o.name.Position = UDim2.fromOffset(centerX - (width + 60) / 2, topY - 18)
+                                o.name.Visible  = true
+                            else o.name.Visible = false end
+
+                            -- Distance
+                            if ESP.Distance then
+                                o.dist.Text     = ("%dm"):format(worldDist)
+                                o.dist.TextColor3 = col
+                                o.dist.Size     = UDim2.fromOffset(width + 60, 14)
+                                o.dist.Position = UDim2.fromOffset(centerX - (width + 60) / 2, topY + height + 2)
+                                o.dist.Visible  = true
+                            else o.dist.Visible = false end
+
+                            -- Health bar (left side, green->red)
+                            if ESP.HealthBar then
+                                local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                                o.hpBg.Position = UDim2.fromOffset(left - 6, topY)
+                                o.hpBg.Size     = UDim2.fromOffset(3, height)
+                                o.hpBg.Visible  = true
+                                o.hpFill.AnchorPoint = Vector2.new(0, 1)
+                                o.hpFill.Position    = UDim2.fromOffset(left - 6, topY + height)
+                                o.hpFill.Size        = UDim2.fromOffset(3, height * pct)
+                                o.hpFill.BackgroundColor3 = Color3.fromRGB(
+                                    math.floor(255 * (1 - pct)), math.floor(255 * pct), 40)
+                                o.hpFill.Visible = true
+                            else o.hpBg.Visible, o.hpFill.Visible = false, false end
+
+                        	 -- Tracer (from bottom-center of screen to box bottom)
+                            if ESP.Tracer then
+                                local from = Vector2.new(vp.X / 2, vp.Y)
+                                local to   = Vector2.new(centerX, topY + height)
+                                local diff = to - from
+                                o.tracer.Position = UDim2.fromOffset(from.X, from.Y)
+                                o.tracer.Size     = UDim2.fromOffset(diff.Magnitude, 1)
+                                o.tracer.Rotation = math.deg(math.atan2(diff.Y, diff.X))
+                                o.tracer.BackgroundColor3 = col
+                                o.tracer.Visible  = true
+                            else o.tracer.Visible = false end
+                        else
+                            o.box.Visible, o.name.Visible, o.dist.Visible = false, false, false
+                            o.hpBg.Visible, o.hpFill.Visible, o.tracer.Visible = false, false, false
+                        end
+
+                        -- Chams (Highlight — native, shows through walls, works on mobile)
+                        if ESP.Chams then
+                            if not o.highlight then
+                                o.highlight = Instance.new("Highlight")
+                                o.highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                o.highlight.FillTransparency = 0.6
+                                o.highlight.OutlineTransparency = 0
+                                o.highlight.Parent = gui
+                            end
+                            o.highlight.Adornee = char
+                            o.highlight.FillColor = col
+                            o.highlight.OutlineColor = col
+                            o.highlight.Enabled = true
+                        elseif o.highlight then
+                            o.highlight.Enabled = false
+                        end
+                    else hideAll(o) end
+                else
+                    hideAll(o)
+                end
+            end
+        end
+    end)
+
+    local removing = Players.PlayerRemoving:Connect(function(plr)
+        local o = objects[plr]
+        if o then
+            pcall(function() o.box:Destroy() end)
+            pcall(function() o.name:Destroy() end)
+            pcall(function() o.dist:Destroy() end)
+            pcall(function() o.hpBg:Destroy() end)
+            pcall(function() o.hpFill:Destroy() end)
+            pcall(function() o.tracer:Destroy() end)
+            if o.highlight then pcall(function() o.highlight:Destroy() end) end
+            objects[plr] = nil
+        end
+    end)
+
+    getgenv().ZkxESP = {
+        State   = ESP,
+        Cleanup = function()
+            if conn then conn:Disconnect() end
+            if removing then removing:Disconnect() end
+            if gui then gui:Destroy() end
+        end,
+    }
+end
+
 -- Lib (maclib)
 local success, MacLib = pcall(function()
     return loadstring(game:HttpGet(
@@ -509,7 +1028,6 @@ local menuVisible = true
 
 local function setWindowVisible(state)
     menuVisible = state
-    -- MacLib exposes a few names across versions; try them all, fall back to gui toggle
     local ok = pcall(function()
         if state then Window:Open() else Window:Close() end
     end)
@@ -553,7 +1071,6 @@ local function buildToggleButton()
     stroke.Thickness    = 1
     stroke.Parent       = btn
 
-    -- Drag handling so the button never gets stuck under a notch/edge.
     local dragging, dragStart, startPos, moved = false, nil, nil, false
     btn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch
@@ -579,7 +1096,6 @@ local function buildToggleButton()
         if input.UserInputType == Enum.UserInputType.Touch
         or input.UserInputType == Enum.UserInputType.MouseButton1 then
             if dragging and not moved then
-                -- treat as a tap, not a drag => toggle
                 setWindowVisible(not menuVisible)
                 btn.Text = menuVisible and "Hide Menu" or "Show Menu"
             end
@@ -593,17 +1109,97 @@ pcall(buildToggleButton)
 local tabGroups = { MainGroup = Window:TabGroup() }
 
 local tabs = {
-    Skins    = tabGroups.MainGroup:Tab({ Name = "Weapons",  Image = "rbxassetid://11963373994" }),
+    Home     = tabGroups.MainGroup:Tab({ Name = "Home",     Image = "rbxassetid://10723407389" }),
+    Skins    = tabGroups.MainGroup:Tab({ Name = "Skins",  Image = "rbxassetid://13577018040" }),
+    Aimbot   = tabGroups.MainGroup:Tab({ Name = "Aimbot",   Image = "rbxassetid://10709818534" }),
+    ESP      = tabGroups.MainGroup:Tab({ Name = "ESP",      Image = "rbxassetid://114590141647644" }),
     Settings = tabGroups.MainGroup:Tab({ Name = "Settings", Image = "rbxassetid://10734950309" }),
 }
 
 local sections = {
+    HomeLeft   = tabs.Home:Section({ Side = "Left"  }),
+    HomeRight  = tabs.Home:Section({ Side = "Right" }),
     SkinsLeft  = tabs.Skins:Section({ Side = "Left"  }),
     SkinsRight = tabs.Skins:Section({ Side = "Right" }),
     Config     = tabs.Settings:Section({ Side = "Left"  }),
     Profiles   = tabs.Settings:Section({ Side = "Right" }),
 }
 
+-- ============================================================
+-- HOME TAB CONTENT
+-- ============================================================
+local STORE_URL   = "https://zkx.mysellauth.com/"
+local COUPON_CODE = "testig"
+local DISCORD_URL = "https://discord.gg/bxu2WMjNjN"
+
+local copyToClipboard = setclipboard or toclipboard or (Clipboard and Clipboard.set) or writeclipboard
+    or (getgenv and getgenv().setclipboard)
+
+sections.HomeLeft:Header({ Text = "Zkx's UnlockAll" })
+
+sections.HomeLeft:Paragraph({
+    Header = "Premium Key",
+    Body   = "Get a premium key at:\n" .. STORE_URL ..
+             "\n\nUse coupon code \"" .. COUPON_CODE .. "\" at checkout for -25% off.",
+})
+
+sections.HomeLeft:Button({
+    Name = "Copy Store Link",
+    Callback = function()
+        if copyToClipboard then
+            pcall(copyToClipboard, STORE_URL)
+            Window:Notify({ Title = "Copied", Description = "Store link copied to clipboard.", Lifetime = 3 })
+        else
+            Window:Notify({ Title = "Store Link", Description = STORE_URL, Lifetime = 8 })
+        end
+    end,
+})
+
+sections.HomeLeft:Button({
+    Name = "Copy Coupon Code (-25%)",
+    Callback = function()
+        if copyToClipboard then
+            pcall(copyToClipboard, COUPON_CODE)
+            Window:Notify({ Title = "Copied", Description = "Coupon \"" .. COUPON_CODE .. "\" copied. -25% at checkout.", Lifetime = 4 })
+        else
+            Window:Notify({ Title = "Coupon Code", Description = COUPON_CODE .. " (-25%)", Lifetime = 8 })
+        end
+    end,
+})
+
+sections.HomeLeft:Button({
+    Name = "Copy Discord Invite",
+    Callback = function()
+        if copyToClipboard then
+            pcall(copyToClipboard, DISCORD_URL)
+            Window:Notify({ Title = "Copied", Description = "Discord invite copied to clipboard.", Lifetime = 3 })
+        else
+            Window:Notify({ Title = "Discord", Description = DISCORD_URL, Lifetime = 8 })
+        end
+    end,
+})
+
+sections.HomeRight:Header({ Text = "How To Buy" })
+
+sections.HomeRight:Paragraph({
+    Header = "Steps",
+    Body   = "1. Tap \"Copy Store Link\" and open it in your browser.\n" ..
+             "2. Pick your key and go to checkout.\n" ..
+             "3. Paste coupon \"" .. COUPON_CODE .. "\" for -25% off.\n" ..
+             "4. Complete payment and redeem your key.",
+})
+
+sections.HomeRight:Header({ Text = "Community" })
+
+sections.HomeRight:Paragraph({
+    Header = "Discord Server",
+    Body   = "Join for support, updates, and key help:\n" .. DISCORD_URL ..
+             "\n\nTap \"Copy Discord Invite\" then paste it into your browser or Discord.",
+})
+
+-- ============================================================
+-- WEAPONS TAB
+-- ============================================================
 local UI_Dropdowns = {}
 local halfPoint = math.ceil(#WeaponList / 2)
 
@@ -622,6 +1218,118 @@ for i, weaponName in ipairs(WeaponList) do
     })
 end
 
+-- ============================================================
+-- AIMBOT UI  (MacLib section — controls only)
+-- ============================================================
+do
+    local Aim = getgenv().ZkxAimbot and getgenv().ZkxAimbot.State
+    if not Aim then
+        Window:Notify({ Title = "Aimbot", Description = "Engine not loaded — check Part 1 is above line 462.", Lifetime = 5 })
+        return
+    end
+
+    local aimTab   = tabs.Aimbot
+    local aimLeft  = aimTab:Section({ Side = "Left"  })
+    local aimRight = aimTab:Section({ Side = "Right" })
+
+    aimLeft:Header({ Text = "Aimbot" })
+
+    aimLeft:Toggle({
+        Name    = "Enabled",
+        Default = Aim.Enabled,
+        Callback = function(v) Aim.Enabled = v end,
+    })
+
+    aimLeft:Slider({
+        Name          = "Prediction",
+        Default       = Aim.Prediction,
+        Minimum       = 0,
+        Maximum       = 1,
+        DisplayMethod = "Hundredths",
+        Callback      = function(v) Aim.Prediction = v end,
+    })
+
+    aimRight:Header({ Text = "FOV" })
+
+    aimRight:Toggle({
+        Name    = "Show FOV Circle",
+        Default = Aim.ShowFOV,
+        Callback = function(v) Aim.ShowFOV = v end,
+    })
+
+    aimRight:Slider({
+        Name          = "FOV Size",
+        Default       = Aim.FOV,
+        Minimum       = 20,
+        Maximum       = 500,
+        DisplayMethod = "Round",
+        Callback      = function(v) Aim.FOV = v end,
+    })
+
+    aimRight:Toggle({
+        Name    = "Team Check",
+        Default = Aim.TeamCheck,
+        Callback = function(v) Aim.TeamCheck = v end,
+    })
+
+    aimLeft:Dropdown({
+        Name    = "Aim Mode",
+        Options = { "Hold", "Toggle", "Always" },
+        Default = Aim.Mode,
+        Callback = function(val)
+            Aim.Mode    = type(val) == "table" and val[1] or val
+            -- reset activation flags when switching modes so it can't get stuck on
+            Aim.Holding = false
+            Aim.Toggled = false
+        end,
+    })
+
+    local aimKeyBtn
+    aimKeyBtn = aimLeft:Button({
+        Name = "Aim Key: " .. (Aim.KeyName or "None"),
+        Callback = function()
+            Aim.Listening   = true
+            Aim.ListenStart = os.clock()
+            pcall(function() aimKeyBtn:UpdateName("Aim Key: [ press key / mouse ]") end)
+        end,
+    })
+    Aim.OnRebind = function(name)
+        pcall(function() aimKeyBtn:UpdateName("Aim Key: " .. name) end)
+    end
+end
+
+-- ============================================================
+-- ESP UI  (MacLib section — controls only)
+-- ============================================================
+do
+    local ESP = getgenv().ZkxESP and getgenv().ZkxESP.State
+    if not ESP then
+        Window:Notify({ Title = "ESP", Description = "Engine not loaded — check Part 1 is above line 462.", Lifetime = 5 })
+        return
+    end
+
+    local espTab   = tabs.ESP
+    local espLeft  = espTab:Section({ Side = "Left"  })
+    local espRight = espTab:Section({ Side = "Right" })
+
+    espLeft:Header({ Text = "ESP" })
+    espLeft:Toggle({ Name = "Enabled",     Default = ESP.Enabled,   Callback = function(v) ESP.Enabled = v end })
+    espLeft:Toggle({ Name = "Box",         Default = ESP.Box,       Callback = function(v) ESP.Box = v end })
+    espLeft:Toggle({ Name = "Name",        Default = ESP.Name,      Callback = function(v) ESP.Name = v end })
+    espLeft:Toggle({ Name = "Distance",    Default = ESP.Distance,  Callback = function(v) ESP.Distance = v end })
+    espLeft:Toggle({ Name = "Health Bar",  Default = ESP.HealthBar, Callback = function(v) ESP.HealthBar = v end })
+
+    espRight:Header({ Text = "Extras" })
+    -- espRight:Toggle({ Name = "Tracers",    Default = ESP.Tracer,    Callback = function(v) ESP.Tracer = v end })
+    espRight:Toggle({ Name = "Chams",      Default = ESP.Chams,     Callback = function(v) ESP.Chams = v end })
+    espRight:Toggle({ Name = "Team Check", Default = ESP.TeamCheck, Callback = function(v) ESP.TeamCheck = v end })
+    espRight:Toggle({ Name = "Team Color", Default = ESP.TeamColor, Callback = function(v) ESP.TeamColor = v end })
+end
+
+
+-- ============================================================
+-- SETTINGS TAB
+-- ============================================================
 sections.Config:Header({ Name = "General Config" })
 
 sections.Config:Keybind({
