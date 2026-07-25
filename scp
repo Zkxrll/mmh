@@ -702,8 +702,7 @@ do
     end
 
     -- ---- main loop ----
-    local conn = RunService.RenderStepped:Connect(function()
-        -- FOV ring follows the aim origin + slider size whenever ShowFOV is on
+local conn = RunService.RenderStepped:Connect(function()
         if Aim.ShowFOV and Aim.Enabled then
             local o = getAimOrigin()
             ring.Visible  = true
@@ -713,17 +712,33 @@ do
             ring.Visible = false
         end
 
-        -- mobile button: only relevant for Hold/Toggle while enabled
         local wantBtn = Aim.Enabled and Aim.Mode ~= "Always"
             and UserInputService.TouchEnabled
         aimBtn.Visible = wantBtn
         local on = aimActive()
-        aimBtn.BackgroundColor3 = on and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(28, 28, 32)
+        aimBtn.BackgroundColor3 = on
+            and Color3.fromRGB(40, 120, 60)
+            or  Color3.fromRGB(28, 28, 32)
 
         if not on then return end
+
         local _part, predicted = getClosestTarget()
-        if predicted then
-            local camera = workspace.CurrentCamera
+        if not predicted then return end
+
+        local camera = workspace.CurrentCamera
+
+        -- desktop: move the OS cursor to the target so mouse-look can't fight the lock
+        if UserInputService.MouseEnabled and mousemoverel then
+            local sp = camera:WorldToViewportPoint(predicted)
+            if sp.Z <= 0 then return end
+            local origin    = getAimOrigin()
+            local targetPos = Vector2.new(sp.X, sp.Y)
+            local move      = targetPos - origin
+            if move.Magnitude > 0.5 then
+                pcall(mousemoverel, move.X, move.Y)
+            end
+        else
+            -- mobile fallback: rotate the camera directly
             camera.CFrame = CFrame.new(camera.CFrame.Position, predicted)
         end
     end)
