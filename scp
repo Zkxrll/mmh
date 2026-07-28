@@ -2,61 +2,42 @@ task.spawn(function()
     if not game:IsLoaded() then game.Loaded:Wait() end
     if game.GameId ~= 6035872082 then warn("Wrong game"); return end
 
-    task.wait() -- let the rest of the script (UI, aimbot) build before we touch anything
+    local i = 0
+    for _, v in getgc() do
+        i += 1
+        if i % 100 == 0 then task.wait() end  -- yield more often
 
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local LogService        = game:GetService("LogService")
-    local ScriptContext     = game:GetService("ScriptContext")
-
-    local dbginfo  = debug.info
-    local costatus = coroutine.status
-    local taskwait = task.wait
-    local clock    = os.clock
-
-    -- Disable every listener on a signal (Disable where the executor supports it,
-    -- fall back to no-op'ing the handler function).
-    local function killConnections(signal)
-        local ok, conns = pcall(getconnections, signal)
-        if not ok then return end
-        for _, c in ipairs(conns) do
-            pcall(function() c:Disable() end)
-            if c.Function then
-                pcall(hookfunction, c.Function, newcclosure(function() end))
-            end
-        end
-    end
-
-    -- 1) Kill the analytics reporting channel.
-    pcall(function()
-        killConnections(ReplicatedStorage.Remotes.AnalyticsPipeline.RemoteEvent.OnClientEvent)
-    end)
-
-    -- 2) Deafen the AC to script errors — this is what it uses to catch the
-    --    stall below and kick you, AND it hides the 30s timeout spam.
-    pcall(function() killConnections(ScriptContext.Error) end)
-
-    -- 3) Mute the log channel the AC also watches.
-    pcall(function() killConnections(LogService.MessageOut) end)
-
-    -- 4) Frame-budgeted GC sweep: STALL the AC (park it), never no-op it.
-    local BUDGET = 0.004
-    local slice  = clock()
-    for _, v in getgc(false) do
-        if clock() - slice >= BUDGET then taskwait(); slice = clock() end
         local t = typeof(v)
+
         if t == "thread" then
-            if costatus(v) ~= "dead" then
-                local ok, src = pcall(dbginfo, v, 1, "s")
+            -- Skip dead threads entirely — no point checking or cancelling them
+            if coroutine.status(v) ~= "dead" then
+                local ok, src = pcall(debug.info, v, 1, "s")
                 if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
                     pcall(task.cancel, v)
                 end
             end
+
         elseif t == "function" then
-            local ok, src = pcall(dbginfo, v, "s")
+            local ok, src = pcall(debug.info, v, "s")
             if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
-                -- Park the caller forever. A no-op nil-return makes it spin and
-                -- hard-freezes the client; an infinite yield just sleeps it.
-                pcall(hookfunction, v, newcclosure(function() return taskwait(9e9) end))
+                pcall(hookfunction, v, newcclosure(function() return task.wait(9e9) end))
+            end
+        end
+    end
+
+    -- Null the remote
+    local ok, remote = pcall(function()
+        return game:GetService("ReplicatedStorage")
+            .Remotes.AnalyticsPipeline.RemoteEvent.OnClientEvent
+    end)
+    if ok and remote then
+        local ok2, conns = pcall(getconnections, remote)
+        if ok2 then
+            for _, conn in ipairs(conns) do
+                if conn.Function then
+                    pcall(hookfunction, conn.Function, newcclosure(function() end))
+                end
             end
         end
     end
