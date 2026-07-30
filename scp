@@ -1,24 +1,23 @@
 task.spawn(function()
-    if not game:IsLoaded() then game.Loaded:Wait() end
-    if game.GameId ~= 6035872082 then warn("Wrong game"); return end
-
+    -- Cancel AC threads
     local i = 0
     for _, v in getgc() do
         i += 1
-        if i % 100 == 0 then task.wait() end  -- yield more often
-
-        local t = typeof(v)
-
-        if t == "thread" then
-            -- Skip dead threads entirely — no point checking or cancelling them
-            if coroutine.status(v) ~= "dead" then
-                local ok, src = pcall(debug.info, v, 1, "s")
-                if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
-                    pcall(task.cancel, v)
-                end
+        if i % 200 == 0 then task.wait() end
+        if typeof(v) == "thread" then
+            local ok, src = pcall(debug.info, v, 1, "s")
+            if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
+                pcall(task.cancel, v)
             end
+        end
+    end
 
-        elseif t == "function" then
+    -- Hook AC functions
+    i = 0
+    for _, v in getgc() do
+        i += 1
+        if i % 200 == 0 then task.wait() end
+        if typeof(v) == "function" then
             local ok, src = pcall(debug.info, v, "s")
             if ok and type(src) == "string" and src:find("AnalyticsPipelineController") then
                 pcall(hookfunction, v, newcclosure(function() return task.wait(9e9) end))
@@ -34,9 +33,9 @@ task.spawn(function()
     if ok and remote then
         local ok2, conns = pcall(getconnections, remote)
         if ok2 then
-            for _, conn in ipairs(conns) do
-                if conn.Function then
-                    pcall(hookfunction, conn.Function, newcclosure(function() end))
+            for _, v in ipairs(conns) do
+                if v.Function then
+                    pcall(hookfunction, v.Function, newcclosure(function() end))
                 end
             end
         end
