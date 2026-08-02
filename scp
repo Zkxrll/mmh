@@ -52,7 +52,7 @@ task.spawn(function()
         end)
     end)
 
-    print("[ACB] Done — remote blocked, no require hook needed")
+    print("[ACB] Done")
 end)
 
 local Players           = game:GetService("Players")
