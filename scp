@@ -292,6 +292,7 @@ end
 -- them. The error reporter needs Library to show its notifications.
 local Library = nil
 local ErrorReporter = nil
+local HttpService = game:GetService('HttpService')
 
 __ZkhHub_shared.obsidian_icons = function()
 -- Vendored from lucide-roblox-direct e8b0019ebd7e18c455bbbd720ed7b610bc6675f7; code is bundled, PNG assets remain runtime-fetched, inline type annotations removed.
@@ -679,18 +680,28 @@ local Library = {
 if RunService:IsStudio() then
     if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
         Library.IsMobile = true
-        Library.OriginalMinSize = Vector2.new(480, 240)
     else
         Library.IsMobile = false
-        Library.OriginalMinSize = Vector2.new(480, 360)
     end
 else
     pcall(function()
         Library.DevicePlatform = UserInputService:GetPlatform()
     end)
-
     Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS)
-    Library.OriginalMinSize = Library.IsMobile and Vector2.new(480, 240) or Vector2.new(480, 360)
+end
+
+-- [PATCHED] Proportional mobile sizing: clamp the window so it fits any screen size.
+do
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+    if Library.IsMobile then
+        -- On mobile take 92% of viewport width and 55% of height so the GUI
+        -- is readable without covering the whole screen.
+        local mW = math.floor(vp.X * 0.92)
+        local mH = math.floor(vp.Y * 0.55)
+        Library.OriginalMinSize = Vector2.new(math.clamp(mW, 300, 720), math.clamp(mH, 200, 480))
+    else
+        Library.OriginalMinSize = Vector2.new(480, 360)
+    end
 end
 
 local Templates = {
@@ -11580,7 +11591,11 @@ function Library:CreateWindow(WindowInfo)
         Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
     end
     if WindowInfo.AutoShow and not Library.ActiveLoading then
-        task.spawn(Library.Toggle)
+        -- [PATCHED] Library.Toggle is a colon-method; passing it bare drops `self`
+        -- and errors silently inside task.spawn, so AutoShow never visibly did anything.
+        task.spawn(function()
+            Library:Toggle()
+        end)
     end
 
     if Library.IsMobile then
@@ -14337,7 +14352,7 @@ local UiSettingsPath = StorageRoot .. '/UISettings.json'
 local HttpService = game:GetService('HttpService')
 
 local DefaultUiSettings = {
-    auto_show = false,
+    auto_show = true,  -- [PATCHED] open on execute by default
     show_notification = true,
     show_keybind_states = false,
     auto_execute_on_teleport = false,
@@ -15124,7 +15139,7 @@ function module.create_window(args)
         Position = args.position,
         Title = args.title,
         Center = args.center,
-        AutoShow = ui_settings.auto_show == true,
+        AutoShow = true,  -- [PATCHED] always open on execute; user can still close/toggle
         DisableSearch = true,
         Footer = args.footer or '.gg/bxu2WMjNjN',
         Icon = args.icon,
@@ -35199,7 +35214,7 @@ ErrorReporter.set_game(GameName)
                     RankLeaderboard = 'P5RANK_LEADERBOARD',
                 },
                 FavoriteKinds = {'Skin', 'Wrap', 'Charm', 'Finisher'},
-                CosmeticPresetPath = 'ZkxHub/RIVALS Cosmetic Presets.json',
+                CosmeticPresetPath = 'ZkxHub/CosmPre.json',
             }
             local RivalsEmotes = {
                 Catalog = {},
@@ -36286,6 +36301,13 @@ ErrorReporter.set_game(GameName)
                 else
                     selectionTable[weaponName] = value
                 end
+
+                if RivalsCosmeticsState.RefreshingDropdownValues == 0
+                    and not RivalsCosmeticsState.ApplyingCosmeticPreset
+                    and type(RivalsCosmetics.QueueCosmeticConfigAutoSave) == 'function' then
+                    RivalsCosmetics.QueueCosmeticConfigAutoSave()
+                end
+
                 return true
             end
 
@@ -36943,6 +36965,10 @@ ErrorReporter.set_game(GameName)
                 if type(RivalsCosmetics.QueueCosmeticPresetAutoSave) == 'function' then
                     RivalsCosmetics.QueueCosmeticPresetAutoSave()
                 end
+                -- [PATCHED] persist skin/wrap/charm/finisher to the active config on every change
+                if type(RivalsCosmetics.QueueCosmeticConfigAutoSave) == 'function' then
+                    RivalsCosmetics.QueueCosmeticConfigAutoSave()
+                end
                 return true
             end
 
@@ -37282,9 +37308,34 @@ ErrorReporter.set_game(GameName)
                 local saveToken = RivalsCosmeticsState.NativeSaveToken
                 task.delay(0.2, function()
                     if RivalsCosmeticsState.NativeSaveToken == saveToken then
+                        -- [PATCHED] this is the ACTUAL save trigger fired every time a
+                        -- skin/wrap/charm/finisher is picked in the game's native
+                        -- customize menu (via CaptureNativeSelection). SaveSelectionsToConfig
+                        -- now self-heals a missing config file (see fix above), and we also
+                        -- always write the standalone cache as a config-independent backup.
                         pcall(RivalsCosmetics.SaveSelectionsToConfig)
+                        pcall(RivalsCosmetics.SaveCosmeticsCache)
                     end
                 end)
+            end
+
+            -- [PATCHED] Debounced auto-save of skin/wrap/charm/finisher selections.
+            -- Writes to a dedicated cache file that works even when no config exists.
+            -- Also tries to push into the active config file as a bonus.
+            do
+                local _configSaveToken = 0
+                function RivalsCosmetics.QueueCosmeticConfigAutoSave()
+                    if RivalsCosmeticsState.ApplyingCosmeticPreset then return end
+                    _configSaveToken = _configSaveToken + 1
+                    local token = _configSaveToken
+                    task.delay(0.4, function()
+                        if token ~= _configSaveToken then return end
+                        -- primary: always-available standalone cache
+                        pcall(RivalsCosmetics.SaveCosmeticsCache)
+                        -- secondary: merge into active config if it exists
+                        pcall(RivalsCosmetics.SaveSelectionsToConfig)
+                    end)
+                end
             end
 
             function RivalsCosmetics.CaptureNativeSelection(toggleFavorite, toggleOnlyUseFavorites, invertedOverride)
@@ -38532,9 +38583,24 @@ ErrorReporter.set_game(GameName)
 
             function RivalsCosmetics.SaveSelectionsToConfig()
                 local configPath = ScriptPaths.config_path(RivalsCosmeticsState.CosmeticsConfigName or 'RIVALS Default')
+
+                -- [PATCHED] Previously this bailed out with `return false` when the
+                -- config file didn't exist yet, meaning cosmetics NEVER saved until
+                -- the user manually saved a config once from the Config tab. Now we
+                -- create a minimal skeleton config so the very first cosmetic pick
+                -- persists immediately.
                 if not isfile(configPath) then
-                    RivalsCosmeticsState.SavedConfigCosmeticObjects = nil
-                    return false
+                    local created = pcall(function()
+                        local folder = configPath:match('^(.*)[/\\][^/\\]+$')
+                        if folder and isfolder and not isfolder(folder) and makefolder then
+                            makefolder(folder)
+                        end
+                        writefile(configPath, HttpService:JSONEncode({ objects = {} }))
+                    end)
+                    if not created or not isfile(configPath) then
+                        RivalsCosmeticsState.SavedConfigCosmeticObjects = nil
+                        return false
+                    end
                 end
 
                 local readOk, rawConfig = pcall(readfile, configPath)
@@ -38588,6 +38654,57 @@ ErrorReporter.set_game(GameName)
                 return pcall(function()
                     writefile(configPath, HttpService:JSONEncode(decoded))
                 end)
+            end
+
+            -- [PATCHED] Standalone cosmetic cache – works even when no config file exists.
+            -- Saves/loads skin, wrap, charm, finisher selections to a dedicated JSON file
+            -- so they persist across sessions without depending on a manual config save.
+            local _COSMETIC_CACHE_PATH = 'ZkxHub/CosmCache.json'
+
+            function RivalsCosmetics.SaveCosmeticsCache()
+                local objectsById = RivalsCosmetics.ResolveSelectionConfigObjectsById()
+                local objects = {}
+                for _, obj in pairs(objectsById) do
+                    if type(obj) == 'table' and obj.idx ~= nil then
+                        objects[#objects + 1] = obj
+                    end
+                end
+                table.sort(objects, function(a, b) return tostring(a.idx) < tostring(b.idx) end)
+                local payload = { version = 1, objects = objects }
+                local ok = pcall(function()
+                    if isfolder and not isfolder('ZkxHub') and makefolder then
+                        makefolder('ZkxHub')
+                    end
+                    writefile(_COSMETIC_CACHE_PATH, HttpService:JSONEncode(payload))
+                end)
+                return ok
+            end
+
+            function RivalsCosmetics.LoadCosmeticsCache()
+                if not (isfile and isfile(_COSMETIC_CACHE_PATH)) then return false end
+                local readOk, raw = pcall(readfile, _COSMETIC_CACHE_PATH)
+                if not readOk or type(raw) ~= 'string' then return false end
+                local ok, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+                if not ok or type(decoded) ~= 'table' then return false end
+                local objects = type(decoded.objects) == 'table' and decoded.objects or {}
+                local loadedAny = false
+                -- [PATCHED] suppress the SetStoredSelection auto-save hook while we're
+                -- the ones writing values in from disk
+                RivalsCosmeticsState.RefreshingDropdownValues = RivalsCosmeticsState.RefreshingDropdownValues + 1
+                for _, object in ipairs(objects) do
+                    local optionId = object and object.idx or nil
+                    local optionInfo = RivalsCosmetics.ResolveCosmeticOptionInfo(optionId)
+                    if optionInfo then
+                        if optionInfo.type == 'Toggle' then
+                            RivalsCosmetics.SetStoredSelection(optionInfo.weaponName, optionInfo.kind, object.value == true)
+                        else
+                            RivalsCosmetics.SetStoredSelection(optionInfo.weaponName, optionInfo.kind, object.value)
+                        end
+                        loadedAny = true
+                    end
+                end
+                RivalsCosmeticsState.RefreshingDropdownValues = math.max(RivalsCosmeticsState.RefreshingDropdownValues - 1, 0)
+                return loadedAny
             end
 
             function RivalsCosmetics.CloneSerializable(value, seen)
@@ -40539,6 +40656,9 @@ ErrorReporter.set_game(GameName)
             RivalsRuntimeBridge.LoadSavedRivalsCosmeticsSelections = RivalsCosmetics.LoadSavedSelectionsFromConfig
             RivalsRuntimeBridge.CaptureSavedRivalsCosmeticsSelections = RivalsCosmetics.CaptureSavedSelectionsBeforeConfigSave
             RivalsRuntimeBridge.SaveRivalsCosmeticsSelections = RivalsCosmetics.SaveSelectionsToConfig
+            -- [PATCHED] standalone cache bridge
+            RivalsRuntimeBridge.SaveCosmeticsCache = RivalsCosmetics.SaveCosmeticsCache
+            RivalsRuntimeBridge.LoadCosmeticsCache  = RivalsCosmetics.LoadCosmeticsCache
             RivalsRuntimeBridge.BindRivalsCosmetics = RivalsCosmetics.BindFirstPersonModels
             RivalsRuntimeBridge.ApplyRivalsCosmetics = RivalsCosmetics.ApplyAll
             RivalsRuntimeBridge.RestoreRivalsCosmetics = RivalsCosmetics.RestoreAppliedCosmetics
@@ -45467,7 +45587,7 @@ ErrorReporter.set_game(GameName)
                     options = Options,
                     local_player = LP,
                     defaults = {
-                        auto_show = false,
+                        auto_show = true,  -- [PATCHED] GUI opens automatically on execute
                         show_notification = true,
                         show_keybind_states = true,
                         auto_execute_on_teleport = true,
@@ -45552,6 +45672,16 @@ ErrorReporter.set_game(GameName)
                     end,
                 })
                 RivalsRuntimeBridge.LoadSavedRivalsCosmeticsSelections()
+                -- [PATCHED] load standalone cosmetic cache on top of config
+                -- (cache contains the most-recent selection, overrides stale config values)
+                task.defer(GuardRivalsCallback('Cosmetics_LoadCache', function()
+                    if type(RivalsRuntimeBridge.LoadCosmeticsCache) == 'function' then
+                        if pcall(RivalsRuntimeBridge.LoadCosmeticsCache) then
+                            RivalsRuntimeBridge.RefreshRivalsCosmetics()
+                            RivalsRuntimeBridge.ApplyRivalsCosmetics()
+                        end
+                    end
+                end))
                 task.defer(GuardRivalsCallback('AutoLoadout_LoadInitialProfiles', RivalsRuntimeBridge.LoadAutoLoadoutProfiles))
                 EnsureEspRenderSettingsTracking()
                 RefreshEspRenderSettings()
