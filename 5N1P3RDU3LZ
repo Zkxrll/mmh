@@ -9,6 +9,7 @@ local Players          = game:GetService('Players')
 local RunService       = game:GetService('RunService')
 local UserInputService = game:GetService('UserInputService')
 local HttpService      = game:GetService('HttpService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
 local LocalPlayer      = Players.LocalPlayer
 
 local IsMobile      = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
@@ -34,7 +35,7 @@ local CONFIG_PATH = 'ZkxHub/SniperDuels.json'
 
 local Settings = {
     ESP = true, ESPBox = true, ESPName = true, ESPHealth = true, ESPTracer = false,
-    ESPMaxDist = 500, TeamCheck = false,
+    ESPMaxDist = 500, TeamCheck = true,
     Aimbot = false, AimEngine = 'Camera',
     TargetPart = 'Head', VisibleCheck = true, ShowFOV = true,
     FOV = 130, Smoothing = 4, MouseFactor = 18,
@@ -119,18 +120,124 @@ local function inputMatches(input, key)
     return input.KeyCode == key
 end
 
--- ══════════════ state ══════════════
+-- ══════════════ team system — learned from the game's own traffic ══════════════
+-- no roblox Teams in this game. three sources, in trust order:
+--   1. Match.NewMatch arg4: { [teamIdx] = { [slot] = {u=userid, pl=player, pt=...} } }
+--   2. PadMatchmakingUpdate: CurrentTeams = { MyTeam={players}, EnemyTeam={players} }
+--   3. KillFeed(killer, victim): server-confirmed ENEMY pairs (no friendly fire)
+-- isTeammate falls back through whatever is known.
 
-local aimHeld     = false   -- pc aim key held
-local aimlockHeld = false   -- mobile AIM button held
-local speedHeld   = false   -- mobile SPD button held
+local myTeamIndex  = nil     -- from NewMatch
+local playerTeam   = {}      -- [player] = team index (NewMatch) or 'my'/'enemy' (pad)
+local enemyPair    = {}      -- [player] = { [otherPlayer] = true } confirmed enemies
 
--- ══════════════ targeting ══════════════
+local function resolvePlayer(ref, userid)
+    if typeof(ref) == 'Instance' and ref:IsA('Player') then return ref end
+    if userid then
+        local p = Players:GetPlayerByUserId(userid)
+        if p then return p end
+    end
+    if type(ref) == 'string' then
+        return Players:FindFirstChild(ref)
+    end
+    if type(ref) == 'number' then
+        return Players:GetPlayerByUserId(ref)
+    end
+    return nil
+end
+
+local function noteEnemyPair(a, b)
+    if not (a and b) or a == b then return end
+    enemyPair[a] = enemyPair[a] or {}
+    enemyPair[a][b] = true
+    enemyPair[b] = enemyPair[b] or {}
+    enemyPair[b][a] = true
+end
+
+local function clearTeamData()
+    myTeamIndex = nil
+    table.clear(playerTeam)
+    table.clear(enemyPair)
+end
+
+do
+    local matchFolder = ReplicatedStorage.Remotes:FindFirstChild('Match')
+    if matchFolder then
+        -- source 1: NewMatch rosters (authoritative)
+        local newMatch = matchFolder:FindFirstChild('NewMatch')
+        if newMatch and newMatch:IsA('RemoteEvent') then
+            newMatch.OnClientEvent:Connect(function(_, _, _, teams)
+                if type(teams) ~= 'table' then return end
+                clearTeamData()
+                for teamIdx, roster in pairs(teams) do
+                    if type(roster) == 'table' then
+                        for _, entry in pairs(roster) do
+                            if type(entry) == 'table' then
+                                local plr = resolvePlayer(entry.pl, entry.u)
+                                if plr == LocalPlayer then
+                                    myTeamIndex = teamIdx
+                                elseif plr then
+                                    playerTeam[plr] = teamIdx
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- source 2: pad matchmaking — MyTeam/EnemyTeam while queueing
+        local padUpdate = matchFolder:FindFirstChild('PadMatchmakingUpdate')
+        if padUpdate and padUpdate:IsA('RemoteEvent') then
+            padUpdate.OnClientEvent:Connect(function(data)
+                if type(data) ~= 'table' then return end
+                local ct = data.CurrentTeams
+                if type(ct) ~= 'table' then return end
+                if myTeamIndex ~= nil then return end   -- NewMatch outranks pads
+                table.clear(playerTeam)
+                if type(ct.MyTeam) == 'table' then
+                    for _, plr in pairs(ct.MyTeam) do
+                        if typeof(plr) == 'Instance' and plr:IsA('Player') and plr ~= LocalPlayer then
+                            playerTeam[plr] = 'my'
+                        end
+                    end
+                end
+                if type(ct.EnemyTeam) == 'table' then
+                    for _, plr in pairs(ct.EnemyTeam) do
+                        if typeof(plr) == 'Instance' and plr:IsA('Player') then
+                            playerTeam[plr] = 'enemy'
+                            noteEnemyPair(LocalPlayer, plr)
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- source 3: killfeed — confirmed enemy pairs
+        local killFeed = matchFolder:FindFirstChild('KillFeed')
+        if killFeed and killFeed:IsA('RemoteEvent') then
+            killFeed.OnClientEvent:Connect(function(killer, victim)
+                noteEnemyPair(resolvePlayer(killer), resolvePlayer(victim))
+            end)
+        end
+    end
+end
 
 local function isTeammate(plr)
     if not Settings.TeamCheck then return false end
-    return LocalPlayer.Team ~= nil and plr.Team == LocalPlayer.Team
+    -- NewMatch data: same team index
+    if myTeamIndex ~= nil then
+        return playerTeam[plr] == myTeamIndex
+    end
+    -- pad data: explicit my/enemy
+    local t = playerTeam[plr]
+    if t == 'my' then return true end
+    if t == 'enemy' then return false end
+    -- killfeed: confirmed enemies are NOT teammates; unknowns treated as enemy
+    return false
 end
+
+-- ══════════════ targeting ══════════════
 
 local function isVisible(part, cam)
     local params = RaycastParams.new()
@@ -303,6 +410,10 @@ local function hlUpdate()
 end
 
 -- ══════════════ aim ══════════════
+
+local aimHeld     = false   -- pc aim key held
+local aimlockHeld = false   -- mobile AIM button held
+local speedHeld   = false   -- mobile SPD button held
 
 local function aimActive()
     return Settings.Aimbot == true and (aimHeld or aimlockHeld)
@@ -526,6 +637,8 @@ table.insert(connections, Players.PlayerRemoving:Connect(function(plr)
     espRemove(plr)
     hlRemove(plr)
     BoundsCache[plr] = nil
+    playerTeam[plr] = nil
+    enemyPair[plr] = nil
 end))
 
 -- ══════════════ keybind picker ══════════════
@@ -607,8 +720,7 @@ if Library then
         -- the library gui builds async (early snapshots catch nothing), so
         -- it's found BY NAME on a short schedule; it gets rescued out of
         -- RobloxGui on fake-gethui executors, and stray "Label" texts /
-        -- wrapped fragments get hidden. all silent — they die once and
-        -- stay dead; destroying them mid-session provoked regrowth.
+        -- wrapped fragments get hidden. all silent.
 
         local function findObsidianGuis()
             local out = {}
@@ -874,7 +986,7 @@ if Library then
             Library:Notify({
                 Title = 'ZkxHub',
                 Content = IsMobile and 'buttons on the right — drag to move'
-                    or 'aim = hold your key (picker in Combat) · menu/noclip keys in Misc',
+                    or 'aim = hold your key (picker in Combat) · team check live',
                 Duration = 5,
             })
         end)
@@ -1055,7 +1167,7 @@ if IsMobile then
             if input.UserInputType ~= Enum.UserInputType.Touch then return end
             if input ~= rId then return end
             local delta = input.Position.X - rStartX
-            state.w = math.clamp(rStartX + delta, MIN_SIZE, MAX_SIZE) - rStartX + rStartW
+            state.w = math.clamp(rStartW + delta, MIN_SIZE, MAX_SIZE)
             state.h = state.w
             frame.Size = UDim2.fromOffset(state.w, state.h)
         end)
