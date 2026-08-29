@@ -1,1 +1,1123 @@
+-- ZkxHub — Sniper Duels
 
+-- ══════════════ guard ══════════════
+local genv = (type(getgenv) == 'function' and getgenv()) or _G
+if genv.__ZkxHubSD then return end
+genv.__ZkxHubSD = true
+
+local Players          = game:GetService('Players')
+local RunService       = game:GetService('RunService')
+local UserInputService = game:GetService('UserInputService')
+local HttpService      = game:GetService('HttpService')
+local LocalPlayer      = Players.LocalPlayer
+
+local IsMobile      = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local HAS_DRAWING   = (type(Drawing) == 'table' and type(Drawing.new) == 'function')
+local HAS_MOUSEMOVE = false
+if not IsMobile and type(mousemoverel) == 'function' then
+    HAS_MOUSEMOVE = pcall(mousemoverel, 0, 0)
+end
+
+local connections = {}
+
+local Window      = nil
+local Library     = nil
+local mobileGui   = nil
+local windowGuis  = {}
+local UIComps     = {}
+local libKey      = nil
+local pickerCount = 0
+
+-- ══════════════ settings ══════════════
+
+local CONFIG_PATH = 'ZkxHub/SniperDuels.json'
+
+local Settings = {
+    ESP = true, ESPBox = true, ESPName = true, ESPHealth = true, ESPTracer = false,
+    ESPMaxDist = 500, TeamCheck = false,
+    Aimbot = false, AimEngine = 'Camera',
+    TargetPart = 'Head', VisibleCheck = true, ShowFOV = true,
+    FOV = 130, Smoothing = 4, MouseFactor = 18,
+    Noclip = false, Speed = true, SpeedValue = 60,
+    MenuKey = Enum.KeyCode.RightShift,
+    AimKey = Enum.UserInputType.MouseButton2,
+    NoclipKey = Enum.KeyCode.V,
+}
+
+do
+    if type(isfile) == 'function' and type(readfile) == 'function' and isfile(CONFIG_PATH) then
+        local ok, data = pcall(readfile, CONFIG_PATH)
+        if ok and type(data) == 'string' then
+            local ok2, tbl = pcall(function() return HttpService:JSONDecode(data) end)
+            if ok2 and type(tbl) == 'table' then
+                for k, v in pairs(tbl) do
+                    if Settings[k] ~= nil and type(v) == type(Settings[k]) then
+                        Settings[k] = v
+                    end
+                end
+                if type(tbl.MenuKeyCode) == 'string' then
+                    local kc = Enum.KeyCode[tbl.MenuKeyCode]
+                    if kc then Settings.MenuKey = kc end
+                end
+                if type(tbl.AimKeyInput) == 'string' then
+                    local okD, key = pcall(function()
+                        if tbl.AimKeyInput:sub(1, 6) == 'MouseB' then
+                            return Enum.UserInputType[tbl.AimKeyInput]
+                        end
+                        return Enum.KeyCode[tbl.AimKeyInput]
+                    end)
+                    if okD and key then Settings.AimKey = key end
+                end
+                if type(tbl.NoclipKeyCode) == 'string' then
+                    local kc = Enum.KeyCode[tbl.NoclipKeyCode]
+                    if kc then Settings.NoclipKey = kc end
+                end
+            end
+        end
+    end
+end
+if IsMobile then Settings.AimEngine = 'Camera' end
+
+local saveToken = 0
+local function scheduleSave()
+    saveToken = saveToken + 1
+    local my = saveToken
+    task.delay(1.5, function()
+        if saveToken ~= my or type(writefile) ~= 'function' then return end
+        local out = {}
+        for k, v in pairs(Settings) do out[k] = v end
+        out.MenuKey = nil
+        out.AimKey = nil
+        out.NoclipKey = nil
+        out.MenuKeyCode = tostring(Settings.MenuKey and Settings.MenuKey.Name or Settings.MenuKey)
+        out.AimKeyInput = tostring(Settings.AimKey and Settings.AimKey.Name or Settings.AimKey)
+        out.NoclipKeyCode = tostring(Settings.NoclipKey and Settings.NoclipKey.Name or Settings.NoclipKey)
+        local ok, json = pcall(function() return HttpService:JSONEncode(out) end)
+        if not ok then return end
+        pcall(function()
+            if type(isfolder) == 'function' and not isfolder('ZkxHub')
+                and type(makefolder) == 'function' then
+                makefolder('ZkxHub')
+            end
+            writefile(CONFIG_PATH, json)
+        end)
+    end)
+end
+
+-- ══════════════ input helpers ══════════════
+
+local function describeInput(key)
+    if typeof(key) == 'EnumItem' then return tostring(key.Name) end
+    return tostring(key)
+end
+
+local function inputMatches(input, key)
+    if key == nil then return false end
+    if typeof(key) == 'EnumItem' and key.EnumType == Enum.UserInputType then
+        return input.UserInputType == key
+    end
+    return input.KeyCode == key
+end
+
+-- ══════════════ state ══════════════
+
+local aimHeld     = false   -- pc aim key held
+local aimlockHeld = false   -- mobile AIM button held
+local speedHeld   = false   -- mobile SPD button held
+
+-- ══════════════ targeting ══════════════
+
+local function isTeammate(plr)
+    if not Settings.TeamCheck then return false end
+    return LocalPlayer.Team ~= nil and plr.Team == LocalPlayer.Team
+end
+
+local function isVisible(part, cam)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local exclude = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then exclude[#exclude + 1] = p.Character end
+    end
+    params.FilterDescendantsInstances = exclude
+    return workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, params) == nil
+end
+
+-- ══════════════ esp bounds — corner projection ══════════════
+
+local PARTS = {
+    'Head','UpperTorso','LowerTorso','HumanoidRootPart',
+    'LeftUpperArm','RightUpperArm','LeftLowerArm','RightLowerArm',
+    'LeftHand','RightHand','LeftUpperLeg','RightUpperLeg',
+    'LeftLowerLeg','RightLowerLeg','LeftFoot','RightFoot',
+    'Torso','Left Arm','Right Arm','Left Leg','Right Leg',
+}
+local CUBE = {
+    Vector3.new( 1, 1, 1), Vector3.new(-1, 1, 1),
+    Vector3.new( 1,-1, 1), Vector3.new(-1,-1, 1),
+    Vector3.new( 1, 1,-1), Vector3.new(-1, 1,-1),
+    Vector3.new( 1,-1,-1), Vector3.new(-1,-1,-1),
+}
+
+local BoundsCache = {}
+
+local function computeBounds(cam, char)
+    local minX, minY, maxX, maxY = 1e9, 1e9, -1e9, -1e9
+    local any = false
+    for _, name in ipairs(PARTS) do
+        local part = char:FindFirstChild(name)
+        if part and part:IsA('BasePart') then
+            local cf = part.CFrame
+            local hx, hy, hz = part.Size.X * 0.5, part.Size.Y * 0.5, part.Size.Z * 0.5
+            for _, c in ipairs(CUBE) do
+                local sp = cam:WorldToViewportPoint(cf * Vector3.new(hx * c.X, hy * c.Y, hz * c.Z))
+                if sp.Z > 0 then
+                    any = true
+                    if sp.X < minX then minX = sp.X end
+                    if sp.Y < minY then minY = sp.Y end
+                    if sp.X > maxX then maxX = sp.X end
+                    if sp.Y > maxY then maxY = sp.Y end
+                end
+            end
+        end
+    end
+    if not any then return nil end
+    return {
+        tl = Vector2.new(minX, minY), br = Vector2.new(maxX, maxY),
+        w = maxX - minX, h = maxY - minY,
+        cx = (minX + maxX) * 0.5, cy = (minY + maxY) * 0.5,
+    }
+end
+
+table.insert(connections, RunService.Heartbeat:Connect(function()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local camPos = cam.CFrame.Position
+    local seen = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and not isTeammate(plr) then
+            seen[plr] = true
+            local char = plr.Character
+            local hum = char and char:FindFirstChildOfClass('Humanoid')
+            local hrp = char and char:FindFirstChild('HumanoidRootPart')
+            if char and hum and hum.Health > 0 and hrp then
+                local b = computeBounds(cam, char)
+                if b then
+                    b.dist = (camPos - hrp.Position).Magnitude
+                    b.hp = hum.Health
+                    b.max = hum.MaxHealth
+                end
+                BoundsCache[plr] = b
+            else
+                BoundsCache[plr] = nil
+            end
+        end
+    end
+    for plr in pairs(BoundsCache) do
+        if not seen[plr] then BoundsCache[plr] = nil end
+    end
+end))
+
+-- ══════════════ esp — drawing path ══════════════
+
+local espObjects = {}
+
+local function espHide(d)
+    for _, l in ipairs(d.box) do l.Visible = false end
+    d.name.Visible = false
+    d.hpBG.Visible = false
+    d.hpFill.Visible = false
+    d.tracer.Visible = false
+end
+
+local function espRemove(plr)
+    local d = espObjects[plr]
+    if not d then return end
+    for _, l in ipairs(d.box) do pcall(function() l:Remove() end) end
+    pcall(function() d.name:Remove() end)
+    pcall(function() d.hpBG:Remove() end)
+    pcall(function() d.hpFill:Remove() end)
+    pcall(function() d.tracer:Remove() end)
+    espObjects[plr] = nil
+end
+
+local function espEnsure(plr)
+    local d = espObjects[plr]
+    if d then return d end
+    d = { box = {}, name = Drawing.new('Text'), hpBG = Drawing.new('Square'),
+          hpFill = Drawing.new('Square'), tracer = Drawing.new('Line') }
+    for i = 1, 4 do
+        local l = Drawing.new('Line')
+        l.Thickness = 1.5
+        l.Color = Color3.fromRGB(255, 80, 80)
+        d.box[i] = l
+    end
+    d.name.Size = 13
+    d.name.Center = true
+    d.name.Outline = true
+    d.name.Color = Color3.fromRGB(255, 255, 255)
+    d.hpBG.Filled = true
+    d.hpBG.Color = Color3.fromRGB(0, 0, 0)
+    d.hpBG.Transparency = 0.5
+    d.hpFill.Filled = true
+    d.tracer.Thickness = 1
+    d.tracer.Color = Color3.fromRGB(255, 200, 0)
+    espObjects[plr] = d
+    return d
+end
+
+-- ══════════════ esp — highlight fallback (no Drawing API) ══════════════
+
+local highlights = {}
+
+local function hlRemove(plr)
+    local hl = highlights[plr]
+    if hl then pcall(function() hl:Destroy() end) highlights[plr] = nil end
+end
+
+local function hlUpdate()
+    for plr, hl in pairs(highlights) do
+        local b = BoundsCache[plr]
+        local show = Settings.ESP and b ~= nil
+            and (Settings.ESPMaxDist <= 0 or (b.dist or 0) <= Settings.ESPMaxDist)
+        hl.Enabled = show == true
+        if show then hl.Adornee = plr.Character end
+    end
+    if Settings.ESP then
+        for plr, b in pairs(BoundsCache) do
+            if b and not highlights[plr]
+                and (Settings.ESPMaxDist <= 0 or (b.dist or 0) <= Settings.ESPMaxDist) then
+                local hl = Instance.new('Highlight')
+                hl.FillColor = Color3.fromRGB(255, 60, 60)
+                hl.FillTransparency = 0.6
+                hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                hl.Adornee = plr.Character
+                hl.Enabled = true
+                local ok = pcall(function() hl.Parent = game:GetService('CoreGui') end)
+                if not ok then hl.Parent = LocalPlayer:WaitForChild('PlayerGui') end
+                highlights[plr] = hl
+            end
+        end
+    end
+end
+
+-- ══════════════ aim ══════════════
+
+local function aimActive()
+    return Settings.Aimbot == true and (aimHeld or aimlockHeld)
+end
+
+local function getAimTarget(cam, center)
+    local best, bestDist = nil, math.huge
+    for plr, b in pairs(BoundsCache) do
+        if b then
+            local dist = (Vector2.new(b.cx, b.cy) - center).Magnitude
+            if dist <= Settings.FOV and dist < bestDist then
+                local char = plr.Character
+                local part = char and (char:FindFirstChild(Settings.TargetPart)
+                    or char:FindFirstChild('HumanoidRootPart'))
+                if part and (not Settings.VisibleCheck or isVisible(part, cam)) then
+                    best, bestDist = part, dist
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- camera engine: Last priority so the game's own camera code writes first
+-- and ours lands on top of the final frame
+RunService:BindToRenderStep('ZkxHubSDAim', Enum.RenderPriority.Last.Value, function()
+    if Settings.AimEngine ~= 'Camera' or not aimActive() then return end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    local part = getAimTarget(cam, center)
+    if not part then return end
+    local alpha = math.clamp(1 / math.max(Settings.Smoothing, 1), 0.02, 1)
+    pcall(function()
+        cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, part.Position), alpha)
+    end)
+end)
+
+-- ══════════════ fov circle ══════════════
+
+local fovCircle = nil
+if HAS_DRAWING then
+    fovCircle = Drawing.new('Circle')
+    fovCircle.Thickness = 1.5
+    fovCircle.NumSides = 64
+    fovCircle.Filled = false
+    fovCircle.Color = Color3.fromRGB(255, 255, 255)
+    fovCircle.Transparency = 0.85
+    fovCircle.Visible = false
+end
+
+-- ══════════════ noclip ══════════════
+
+local noclipConn = nil
+
+local function enableNoclip()
+    if noclipConn then return end
+    noclipConn = RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA('BasePart') and p.CanCollide then
+                p.CanCollide = false
+            end
+        end
+    end)
+end
+
+local function disableNoclip()
+    if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+    local char = LocalPlayer.Character
+    if char then
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA('BasePart') then pcall(function() p.CanCollide = true end) end
+        end
+    end
+end
+
+-- ══════════════ speed ══════════════
+
+local speedDefault, speedActive = nil, false
+
+local function getHumanoid()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChildOfClass('Humanoid')
+end
+
+local function applySpeed()
+    local hum = getHumanoid()
+    if not hum then return end
+    if not speedActive then
+        speedDefault = hum.WalkSpeed
+        speedActive = true
+    end
+    hum.WalkSpeed = Settings.SpeedValue
+end
+
+local function restoreSpeed()
+    if not speedActive then return end
+    speedActive = false
+    local hum = getHumanoid()
+    if hum and speedDefault then hum.WalkSpeed = speedDefault end
+    speedDefault = nil
+end
+
+table.insert(connections, LocalPlayer.CharacterAdded:Connect(function()
+    speedActive = false
+    speedDefault = nil
+end))
+
+-- ══════════════ main render loop ══════════════
+
+table.insert(connections, RunService.RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local VP = cam.ViewportSize
+    local center = Vector2.new(VP.X / 2, VP.Y / 2)
+
+    -- speed (E hold / SPD button)
+    local held = Settings.Speed and (UserInputService:IsKeyDown(Enum.KeyCode.E) or speedHeld)
+    if held and not speedActive then
+        applySpeed()
+    elseif not held and speedActive then
+        restoreSpeed()
+    elseif held and speedActive then
+        local hum = getHumanoid()
+        if hum then hum.WalkSpeed = Settings.SpeedValue end
+    end
+
+    -- esp: visible-set tracking so dead/gone players' boxes hide instead
+    -- of freezing on screen
+    if HAS_DRAWING then
+        local visible = {}
+        if Settings.ESP then
+            for plr, b in pairs(BoundsCache) do
+                if b and (Settings.ESPMaxDist <= 0 or (b.dist or 0) <= Settings.ESPMaxDist) then
+                    visible[plr] = true
+                    local d = espEnsure(plr)
+
+                    if Settings.ESPBox then
+                        local segs = {
+                            {Vector2.new(b.tl.X, b.tl.Y), Vector2.new(b.br.X, b.tl.Y)},
+                            {Vector2.new(b.br.X, b.tl.Y), Vector2.new(b.br.X, b.br.Y)},
+                            {Vector2.new(b.br.X, b.br.Y), Vector2.new(b.tl.X, b.br.Y)},
+                            {Vector2.new(b.tl.X, b.br.Y), Vector2.new(b.tl.X, b.tl.Y)},
+                        }
+                        for i, seg in ipairs(segs) do
+                            d.box[i].From = seg[1]
+                            d.box[i].To = seg[2]
+                            d.box[i].Visible = true
+                        end
+                    else
+                        for _, l in ipairs(d.box) do l.Visible = false end
+                    end
+
+                    if Settings.ESPName then
+                        d.name.Text = string.format('%s [%dm]', plr.DisplayName, math.floor(b.dist or 0))
+                        d.name.Position = Vector2.new(b.cx, b.tl.Y - 16)
+                        d.name.Visible = true
+                    else
+                        d.name.Visible = false
+                    end
+
+                    if Settings.ESPHealth and b.hp then
+                        local pct = math.clamp(b.hp / math.max(b.max, 1), 0, 1)
+                        local barW, barX = 4, b.tl.X - 7
+                        d.hpBG.Position = Vector2.new(barX, b.tl.Y)
+                        d.hpBG.Size = Vector2.new(barW, b.h)
+                        d.hpBG.Visible = true
+                        d.hpFill.Position = Vector2.new(barX, b.tl.Y + b.h * (1 - pct))
+                        d.hpFill.Size = Vector2.new(barW, b.h * pct)
+                        d.hpFill.Color = Color3.fromRGB(math.floor(255 * (1 - pct)), math.floor(255 * pct), 0)
+                        d.hpFill.Visible = true
+                    else
+                        d.hpBG.Visible = false
+                        d.hpFill.Visible = false
+                    end
+
+                    if Settings.ESPTracer then
+                        d.tracer.From = Vector2.new(VP.X / 2, VP.Y)
+                        d.tracer.To = Vector2.new(b.cx, b.cy)
+                        d.tracer.Visible = true
+                    else
+                        d.tracer.Visible = false
+                    end
+                end
+            end
+        end
+        for plr, d in pairs(espObjects) do
+            if not visible[plr] then espHide(d) end
+        end
+    else
+        hlUpdate()
+    end
+
+    -- fov circle
+    if fovCircle then
+        if Settings.ShowFOV and Settings.Aimbot then
+            fovCircle.Position = center
+            fovCircle.Radius = Settings.FOV
+            fovCircle.Visible = true
+        else
+            fovCircle.Visible = false
+        end
+    end
+
+    -- mouse aim engine
+    if Settings.AimEngine == 'Mouse' and HAS_MOUSEMOVE and aimActive() then
+        local part = getAimTarget(cam, center)
+        if part then
+            local sp = cam:WorldToViewportPoint(part.Position)
+            if sp.Z > 0 then
+                local f = Settings.MouseFactor / 100
+                pcall(mousemoverel, (sp.X - center.X) * f, (sp.Y - center.Y) * f)
+            end
+        end
+    end
+end))
+
+table.insert(connections, Players.PlayerRemoving:Connect(function(plr)
+    espRemove(plr)
+    hlRemove(plr)
+    BoundsCache[plr] = nil
+end))
+
+-- ══════════════ keybind picker ══════════════
+
+local function rebindablePicker(gb, labelText, currentKey, onPick)
+    if not gb then return nil end
+    local state = { listening = false }
+    local btn
+    local ok, b = pcall(function()
+        return gb:AddButton({
+            Text = labelText .. ': ' .. (currentKey and describeInput(currentKey) or 'none'),
+            Func = function()
+                state.listening = true
+                pickerCount = pickerCount + 1
+                pcall(function() btn:SetText(labelText .. ': ...press a key') end)
+            end,
+        })
+    end)
+    if not ok or type(b) ~= 'table' then return nil end
+    btn = b
+
+    local conn = UserInputService.InputBegan:Connect(function(input)
+        if not state.listening then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then return end
+        state.listening = false
+        pickerCount = math.max(0, pickerCount - 1)
+        if input.KeyCode == Enum.KeyCode.Escape then
+            pcall(function() btn:SetText(labelText .. ': ' .. describeInput(currentKey or 'none')) end)
+            return
+        end
+        local picked
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then
+            picked = input.UserInputType
+        else
+            picked = input.KeyCode
+        end
+        onPick(picked)
+        currentKey = picked
+        pcall(function() btn:SetText(labelText .. ': ' .. describeInput(picked)) end)
+    end)
+    table.insert(connections, conn)
+    return btn
+end
+
+-- ══════════════ obsidian ui ══════════════
+-- this build ignores options tables on AddToggle/AddSlider/AddDropdown
+-- (key-read-probed), so components are created bare and configured via
+-- their own setters: SetText / SetValue / SetMin / SetMax / SetValues.
+
+local okLib, libResult = pcall(function()
+    return loadstring(game:HttpGet('https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua', true))()
+end)
+if okLib and type(libResult) == 'table' then
+    Library = libResult
+else
+    warn('[ZkxHub] Obsidian failed to load — headless mode (keybinds still work)')
+end
+
+if Library then
+    local okWin, win = pcall(function()
+        return Library:CreateWindow({
+            Title = 'ZkxHub',
+            Footer = 'sniper duels',
+            Size = UDim2.new(0, 560, 0, 400),
+            ToggleKeybind = Settings.MenuKey,
+        })
+    end)
+
+    if not okWin or type(win) ~= 'table' then
+        warn('[ZkxHub] CreateWindow failed: ' .. tostring(win))
+        Library = nil
+    else
+        Window = win
+        libKey = Settings.MenuKey
+
+        -- ── silent maintenance ──
+        -- the library gui builds async (early snapshots catch nothing), so
+        -- it's found BY NAME on a short schedule; it gets rescued out of
+        -- RobloxGui on fake-gethui executors, and stray "Label" texts /
+        -- wrapped fragments get hidden. all silent — they die once and
+        -- stay dead; destroying them mid-session provoked regrowth.
+
+        local function findObsidianGuis()
+            local out = {}
+            local function collect(parent)
+                if typeof(parent) ~= 'Instance' then return end
+                for _, c in ipairs(parent:GetChildren()) do
+                    if c:IsA('ScreenGui') and c.Name == 'Obsidian' then
+                        out[#out + 1] = c
+                    end
+                end
+            end
+            pcall(collect, game:GetService('CoreGui'))
+            if type(gethui) == 'function' then
+                local ok, ui = pcall(gethui)
+                if ok then pcall(collect, ui) end
+            end
+            pcall(collect, LocalPlayer:FindFirstChildOfClass('PlayerGui'))
+            return out
+        end
+
+        local LABEL_FRAGMENTS = { a = true, b = true, e = true, l = true }
+
+        local function silentSweep()
+            local function walk(inst)
+                local isLabel = inst:IsA('TextLabel')
+                if isLabel or inst:IsA('TextButton') or inst:IsA('TextBox') then
+                    local t = inst.Text
+                    if type(t) == 'string' and #t > 0 and #t < 40 then
+                        local norm = t:lower():gsub('^%s+', ''):gsub('%s+$', '')
+                        if norm == 'label'
+                            or (isLabel and #norm == 1 and LABEL_FRAGMENTS[norm] ~= nil) then
+                            inst.Visible = false
+                            return
+                        end
+                    end
+                end
+                for _, c in ipairs(inst:GetChildren()) do
+                    pcall(walk, c)
+                end
+            end
+            for _, g in ipairs(findObsidianGuis()) do
+                if g.Parent then pcall(walk, g) end
+            end
+        end
+
+        local function delayedRescue()
+            for _, g in ipairs(findObsidianGuis()) do
+                if not table.find(windowGuis, g) then
+                    windowGuis[#windowGuis + 1] = g
+                end
+                if g:GetFullName():find('RobloxGui', 1, true) then
+                    pcall(function() g.Parent = game:GetService('CoreGui') end)
+                end
+            end
+        end
+
+        task.delay(0.3, function() delayedRescue() silentSweep() end)
+        task.delay(1, function() delayedRescue() silentSweep() end)
+        task.delay(2.5, function() delayedRescue() silentSweep() end)
+
+        -- ── tabs + groupboxes ──
+
+        local okTabC, TabCombat  = pcall(function() return Window:AddTab({ Name = 'Combat',  Icon = 'crosshair' }) end)
+        local okTabV, TabVisuals = pcall(function() return Window:AddTab({ Name = 'Visuals', Icon = 'eye' }) end)
+        local okTabM, TabMisc    = pcall(function() return Window:AddTab({ Name = 'Misc',    Icon = 'settings' }) end)
+
+        -- combat: aimbot LEFT, targeting RIGHT
+        local GBCombat, GBTarget
+        if okTabC and type(TabCombat) == 'table' then
+            local okL, l = pcall(function() return TabCombat:AddLeftGroupbox({ Name = 'Aimbot' }) end)
+            if okL and type(l) == 'table' then GBCombat = l end
+            local okR, r = pcall(function() return TabCombat:AddRightGroupbox({ Name = 'Targeting' }) end)
+            if okR and type(r) == 'table' then GBTarget = r end
+            if not GBCombat then
+                local ok, gb = pcall(function() return TabCombat:AddGroupbox({ Name = 'Aimbot' }) end)
+                if ok and type(gb) == 'table' then GBCombat = gb end
+            end
+            if not GBTarget then GBTarget = GBCombat end
+        end
+
+        local function safeGB(tab, name)
+            if not (tab and type(tab) == 'table') then return nil end
+            local ok, gb = pcall(function() return tab:AddGroupbox({ Name = name }) end)
+            if ok and type(gb) == 'table' then return gb end
+            return nil
+        end
+
+        local GBVisuals = safeGB(okTabV and TabVisuals, 'ESP')
+        local GBMove    = safeGB(okTabM and TabMisc, 'Movement')
+        local GBKeys    = safeGB(okTabM and TabMisc, 'Keybinds')
+        local GBSess    = safeGB(okTabM and TabMisc, 'Session')
+
+        -- ── component builders ──
+
+        local function wire(obj, fn)
+            if type(obj) ~= 'table' then return end
+            pcall(function() obj:OnChanged(fn) end)
+            pcall(function() obj:Callback(fn) end)
+        end
+
+        local function addToggle(gb, text, default, fn)
+            if not gb then return nil end
+            local ok, obj = pcall(function() return gb:AddToggle({}) end)
+            if not ok or type(obj) ~= 'table' then return nil end
+            pcall(function() obj:SetText(text) end)
+            pcall(function() obj:SetValue(default) end)
+            wire(obj, fn)
+            return obj
+        end
+
+        local function addSlider(gb, text, min, max, default, fn, suffix)
+            if not gb then return nil end
+            local ok, obj = pcall(function() return gb:AddSlider({}) end)
+            if not ok or type(obj) ~= 'table' then return nil end
+            pcall(function() obj:SetText(text) end)
+            pcall(function() obj:SetMin(min) end)
+            pcall(function() obj:SetMax(max) end)
+            if suffix then pcall(function() obj:SetSuffix(suffix) end) end
+            pcall(function() obj:SetValue(default) end)
+            wire(obj, fn)
+            return obj
+        end
+
+        local function addDropdown(gb, text, values, default, fn)
+            if not gb then return nil end
+            local ok, obj = pcall(function() return gb:AddDropdown({}) end)
+            if not ok or type(obj) ~= 'table' then return nil end
+            pcall(function() obj:SetText(text) end)
+            pcall(function() obj:SetValues(values) end)
+            pcall(function() obj:SetValue(default) end)
+            wire(obj, fn)
+            return obj
+        end
+
+        local function addButton(gb, text, fn)
+            if not gb then return nil end
+            local ok, obj = pcall(function() return gb:AddButton({ Text = text, Func = fn }) end)
+            if not ok or type(obj) ~= 'table' then return nil end
+            return obj
+        end
+
+        local function single(cb)
+            return function(v)
+                if type(v) == 'table' then v = v[1] end
+                if v ~= nil then cb(v) end
+            end
+        end
+
+        -- ── combat left: aimbot ──
+
+        UIComps.aim = addToggle(GBCombat, 'Aimbot', Settings.Aimbot, function(v)
+            Settings.Aimbot = v scheduleSave()
+        end)
+
+        rebindablePicker(GBCombat, 'Aim Key', Settings.AimKey, function(picked)
+            Settings.AimKey = picked
+            scheduleSave()
+        end)
+
+        addSlider(GBCombat, 'FOV', 20, 400, Settings.FOV, function(v)
+            Settings.FOV = v scheduleSave()
+        end)
+
+        addSlider(GBCombat, 'Smoothing', 1, 12, Settings.Smoothing, function(v)
+            Settings.Smoothing = v scheduleSave()
+        end)
+
+        local engines = HAS_MOUSEMOVE and { 'Camera', 'Mouse' } or { 'Camera' }
+        addDropdown(GBCombat, 'Aim Engine', engines, Settings.AimEngine, single(function(v)
+            Settings.AimEngine = v scheduleSave()
+        end))
+
+        addToggle(GBCombat, 'FOV Circle', Settings.ShowFOV, function(v)
+            Settings.ShowFOV = v scheduleSave()
+        end)
+
+        if HAS_MOUSEMOVE then
+            addSlider(GBCombat, 'Mouse Strength', 1, 100, Settings.MouseFactor, function(v)
+                Settings.MouseFactor = v scheduleSave()
+            end)
+        end
+
+        -- ── combat right: targeting ──
+
+        addDropdown(GBTarget, 'Target Part', { 'Head', 'HumanoidRootPart' }, Settings.TargetPart, single(function(v)
+            Settings.TargetPart = v scheduleSave()
+        end))
+
+        addToggle(GBTarget, 'Visible Check', Settings.VisibleCheck, function(v)
+            Settings.VisibleCheck = v scheduleSave()
+        end)
+
+        UIComps.team = addToggle(GBTarget, 'Team Check', Settings.TeamCheck, function(v)
+            Settings.TeamCheck = v scheduleSave()
+        end)
+
+        -- ── visuals ──
+
+        UIComps.esp = addToggle(GBVisuals, 'ESP', Settings.ESP, function(v)
+            Settings.ESP = v scheduleSave()
+        end)
+        addToggle(GBVisuals, 'Box', Settings.ESPBox, function(v)
+            Settings.ESPBox = v scheduleSave()
+        end)
+        addToggle(GBVisuals, 'Name', Settings.ESPName, function(v)
+            Settings.ESPName = v scheduleSave()
+        end)
+        addToggle(GBVisuals, 'Health Bar', Settings.ESPHealth, function(v)
+            Settings.ESPHealth = v scheduleSave()
+        end)
+        addToggle(GBVisuals, 'Tracer', Settings.ESPTracer, function(v)
+            Settings.ESPTracer = v scheduleSave()
+        end)
+        addSlider(GBVisuals, 'Max Distance', 100, 3000, Settings.ESPMaxDist, function(v)
+            Settings.ESPMaxDist = v scheduleSave()
+        end)
+
+        -- ── movement ──
+
+        UIComps.noclip = addToggle(GBMove, 'Noclip', Settings.Noclip, function(v)
+            Settings.Noclip = v
+            if v then enableNoclip() else disableNoclip() end
+            scheduleSave()
+        end)
+        UIComps.speed = addToggle(GBMove, 'Speed Hold', Settings.Speed, function(v)
+            Settings.Speed = v
+            if not v then restoreSpeed() end
+            scheduleSave()
+        end)
+        addSlider(GBMove, 'Boost Speed', 16, 250, Settings.SpeedValue, function(v)
+            Settings.SpeedValue = v scheduleSave()
+        end)
+
+        -- ── keybinds (aim key lives in Combat) ──
+
+        rebindablePicker(GBKeys, 'Menu Key', Settings.MenuKey, function(picked)
+            Settings.MenuKey = picked
+            scheduleSave()
+        end)
+        rebindablePicker(GBKeys, 'Noclip Key', Settings.NoclipKey, function(picked)
+            Settings.NoclipKey = picked
+            scheduleSave()
+        end)
+
+        -- ── session ──
+
+        addButton(GBSess, 'Unload', function()
+            genv.__ZkxHubSD = nil
+            pcall(function() RunService:UnbindFromRenderStep('ZkxHubSDAim') end)
+            for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+            disableNoclip()
+            restoreSpeed()
+            for plr in pairs(espObjects) do espRemove(plr) end
+            for plr in pairs(highlights) do hlRemove(plr) end
+            if fovCircle then pcall(function() fovCircle:Remove() end) end
+            if mobileGui then pcall(function() mobileGui:Destroy() end) end
+            pcall(function() Library:Unload() end)
+        end)
+
+        if Settings.Noclip then enableNoclip() end
+
+        pcall(function()
+            Library:Notify({
+                Title = 'ZkxHub',
+                Content = IsMobile and 'buttons on the right — drag to move'
+                    or 'aim = hold your key (picker in Combat) · menu/noclip keys in Misc',
+                Duration = 5,
+            })
+        end)
+    end
+end
+
+local function syncComp(comp, v)
+    if type(comp) == 'table' and type(comp.SetValue) == 'function' then
+        pcall(comp.SetValue, comp, v)
+    end
+end
+
+-- ══════════════ mobile button rig ══════════════
+
+if IsMobile then
+    mobileGui = Instance.new('ScreenGui')
+    mobileGui.Name = 'ZkxHubButtons'
+    mobileGui.ResetOnSpawn = false
+    mobileGui.IgnoreGuiInset = true
+    mobileGui.DisplayOrder = 999
+    local okP = pcall(function() mobileGui.Parent = game:GetService('CoreGui') end)
+    if not mobileGui.Parent then mobileGui.Parent = LocalPlayer:WaitForChild('PlayerGui') end
+
+    local cam0 = workspace.CurrentCamera
+    local screen = cam0 and cam0.ViewportSize or Vector2.new(500, 500)
+
+    local DEFAULT_W = math.floor(screen.X * 0.13)
+    local DEFAULT_H = math.floor(screen.Y * 0.09)
+    local MIN_SIZE, MAX_SIZE = 40, 300
+
+    local defs = {
+        { id = 'esp',  label = 'ESP',  color = Color3.fromRGB(50, 120, 255), yFrac = 0.30, kind = 'toggle' },
+        { id = 'aim',  label = 'AIM',  color = Color3.fromRGB(255, 80, 80),  yFrac = 0.40, kind = 'hold'   },
+        { id = 'spd',  label = 'SPD',  color = Color3.fromRGB(80, 200, 80),  yFrac = 0.50, kind = 'hold'   },
+        { id = 'nc',   label = 'NC',   color = Color3.fromRGB(180, 80, 255), yFrac = 0.60, kind = 'toggle' },
+        { id = 'menu', label = 'MENU', color = Color3.fromRGB(230, 180, 60), yFrac = 0.70, kind = 'menu'   },
+    }
+
+    local function makeButton(def)
+        local state = {
+            x = screen.X - DEFAULT_W - 8,
+            y = math.floor(screen.Y * def.yFrac),
+            w = DEFAULT_W, h = DEFAULT_H,
+            on = false, dragging = false, dragId = nil,
+            offX = 0, offY = 0, moved = 0,
+        }
+
+        local frame = Instance.new('Frame')
+        frame.BackgroundColor3 = def.color
+        frame.BackgroundTransparency = 0.4
+        frame.BorderSizePixel = 0
+        frame.ZIndex = 10
+        frame.Position = UDim2.fromOffset(state.x, state.y)
+        frame.Size = UDim2.fromOffset(state.w, state.h)
+        frame.Active = true
+        frame.Parent = mobileGui
+
+        local corner = Instance.new('UICorner')
+        corner.CornerRadius = UDim.new(0.18, 0)
+        corner.Parent = frame
+
+        local label = Instance.new('TextLabel')
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextScaled = true
+        label.Font = Enum.Font.GothamBold
+        label.Text = def.label
+        label.ZIndex = 11
+        label.Parent = frame
+
+        local handle = Instance.new('Frame')
+        handle.Size = UDim2.fromOffset(18, 18)
+        handle.Position = UDim2.new(1, -18, 1, -18)
+        handle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        handle.BackgroundTransparency = 0.5
+        handle.BorderSizePixel = 0
+        handle.ZIndex = 12
+        handle.Active = true
+        handle.Parent = frame
+        do
+            local hc = Instance.new('UICorner')
+            hc.CornerRadius = UDim.new(0.3, 0)
+            hc.Parent = handle
+        end
+
+        local function clampPos(x, y)
+            return math.clamp(x, 0, screen.X - state.w), math.clamp(y, 0, screen.Y - state.h)
+        end
+
+        local function setVisual(active)
+            frame.BackgroundTransparency = active and 0.05 or 0.4
+        end
+
+        local function fireAction()
+            if def.kind == 'toggle' then
+                state.on = not state.on
+                setVisual(state.on)
+                if def.id == 'esp' then
+                    Settings.ESP = state.on
+                    syncComp(UIComps.esp, state.on)
+                    scheduleSave()
+                elseif def.id == 'nc' then
+                    Settings.Noclip = state.on
+                    if state.on then enableNoclip() else disableNoclip() end
+                    syncComp(UIComps.noclip, state.on)
+                    scheduleSave()
+                end
+            elseif def.kind == 'hold' then
+                if def.id == 'aim' then aimlockHeld = true end
+                if def.id == 'spd' then speedHeld = true end
+                setVisual(true)
+            elseif def.kind == 'menu' then
+                local done = pcall(function() Window:Toggle() end)
+                if not done then
+                    for _, g in ipairs(windowGuis) do
+                        pcall(function() g.Enabled = not g.Enabled end)
+                    end
+                end
+            end
+        end
+
+        local function releaseAction()
+            if def.kind == 'hold' then
+                if def.id == 'aim' then aimlockHeld = false end
+                if def.id == 'spd' then speedHeld = false end
+                setVisual(false)
+            end
+        end
+
+        frame.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if not state.dragging then
+                state.dragging = true
+                state.dragId = input
+                state.offX = input.Position.X - state.x
+                state.offY = input.Position.Y - state.y
+                state.moved = 0
+            end
+            if def.kind == 'hold' then fireAction() end
+        end)
+
+        frame.InputChanged:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if state.dragging and input == state.dragId then
+                state.moved = state.moved
+                    + math.abs(input.Position.X - (state.x + state.offX))
+                    + math.abs(input.Position.Y - (state.y + state.offY))
+                state.x, state.y = clampPos(input.Position.X - state.offX, input.Position.Y - state.offY)
+                frame.Position = UDim2.fromOffset(state.x, state.y)
+            end
+        end)
+
+        frame.InputEnded:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if state.dragging and input == state.dragId then
+                state.dragging = false
+                state.dragId = nil
+                if state.moved < 12 then
+                    if def.kind == 'toggle' or def.kind == 'menu' then
+                        fireAction()
+                    end
+                end
+            end
+            releaseAction()
+        end)
+
+        local rId = nil
+        local rStartX, rStartW = 0, 0
+        handle.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if rId then return end
+            rId = input
+            rStartX = input.Position.X
+            rStartW = state.w
+        end)
+        handle.InputChanged:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if input ~= rId then return end
+            local delta = input.Position.X - rStartX
+            state.w = math.clamp(rStartX + delta, MIN_SIZE, MAX_SIZE) - rStartX + rStartW
+            state.h = state.w
+            frame.Size = UDim2.fromOffset(state.w, state.h)
+        end)
+        handle.InputEnded:Connect(function(input)
+            if input == rId then rId = nil end
+        end)
+
+        if def.id == 'esp' then
+            state.on = Settings.ESP
+            setVisual(state.on)
+        elseif def.id == 'nc' then
+            state.on = Settings.Noclip
+            setVisual(state.on)
+        end
+    end
+
+    for _, def in ipairs(defs) do makeButton(def) end
+end
+
+-- ══════════════ pc input — no gameProcessed guard ══════════════
+-- combat inputs are game-processed by definition (RMB = scope); the old
+-- guard silently ate the aim key. chat text can trigger letter binds —
+-- that's the trade every combat script makes.
+
+local function toggleWindow()
+    local done = false
+    if Window then done = pcall(function() Window:Toggle() end) end
+    if not done then
+        for _, g in ipairs(windowGuis) do
+            pcall(function() g.Enabled = not g.Enabled end)
+        end
+    end
+end
+
+table.insert(connections, UserInputService.InputBegan:Connect(function(input)
+    if pickerCount > 0 then return end   -- a keybind picker is listening
+
+    if Settings.MenuKey and inputMatches(input, Settings.MenuKey) then
+        -- the library owns libKey for this session (set at window creation);
+        -- handling it here too would double-toggle. next boot uses the new key.
+        if Settings.MenuKey ~= libKey then
+            toggleWindow()
+        end
+        return
+    end
+
+    if Settings.NoclipKey and inputMatches(input, Settings.NoclipKey) then
+        Settings.Noclip = not Settings.Noclip
+        if Settings.Noclip then enableNoclip() else disableNoclip() end
+        syncComp(UIComps.noclip, Settings.Noclip)
+        scheduleSave()
+        return
+    end
+
+    if Settings.AimKey and inputMatches(input, Settings.AimKey) then
+        aimHeld = true
+        return
+    end
+end))
+
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+    if Settings.AimKey and inputMatches(input, Settings.AimKey) then
+        aimHeld = false
+    end
+end))
