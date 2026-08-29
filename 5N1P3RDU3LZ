@@ -703,7 +703,7 @@ if Library then
     local okWin, win = pcall(function()
         return Library:CreateWindow({
             Title = 'ZkxHub',
-            Footer = 'sniper duels',
+            Footer = 'discord.gg/bxu2WMjNjN',
             Size = UDim2.new(0, 560, 0, 400),
             ToggleKeybind = Settings.MenuKey,
         })
