@@ -811,7 +811,7 @@ if Library then
         local GBVisuals = safeGB(okTabV and TabVisuals, 'ESP')
         local GBMove    = safeGB(okTabM and TabMisc, 'Movement')
         local GBKeys    = safeGB(okTabM and TabMisc, 'Keybinds')
-        local GBUnl    = safeGB(okTabM and TabMisc, 'Unload')
+        local GBUnl    = safeGB(okTabM and TabMisc, 'Unload Script')
 
         -- ── component builders ──
 
