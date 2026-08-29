@@ -811,7 +811,7 @@ if Library then
         local GBVisuals = safeGB(okTabV and TabVisuals, 'ESP')
         local GBMove    = safeGB(okTabM and TabMisc, 'Movement')
         local GBKeys    = safeGB(okTabM and TabMisc, 'Keybinds')
-        local GBSess    = safeGB(okTabM and TabMisc, 'Session')
+        local GBUnl    = safeGB(okTabM and TabMisc, 'Unload')
 
         -- ── component builders ──
 
@@ -967,7 +967,7 @@ if Library then
 
         -- ── session ──
 
-        addButton(GBSess, 'Unload', function()
+        addButton(GBUnl, 'Unload', function()
             genv.__ZkxHubSD = nil
             pcall(function() RunService:UnbindFromRenderStep('ZkxHubSDAim') end)
             for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
