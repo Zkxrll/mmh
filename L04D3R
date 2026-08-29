@@ -1,1 +1,28 @@
+--[[
+    ZkxHub loader — universe id routing
+    Rivals       -> universe 6035872082
+    Sniper Duels -> universe 7264587281
+    every place/mode inside each universe is covered by these two keys.
+]]
 
+local SOURCES = {
+    [6035872082] = 'https://raw.githubusercontent.com/Zkxrll/mmh/refs/heads/main/R1V4LZ',
+    [7264587281] = 'https://raw.githubusercontent.com/Zkxrll/mmh/refs/heads/main/5N1P3RDU3LZ',
+}
+
+local url = SOURCES[game.GameId] or SOURCES[game.PlaceId]
+if not url then return end
+
+local ok, src = pcall(function() return game:HttpGet(url, true) end)
+if not ok or type(src) ~= 'string' or #src == 0 then
+    warn('[ZkxHub] fetch failed — repo or file renamed')
+    return
+end
+
+local fn = loadstring(src)
+if fn then
+    local okRun, err = pcall(fn)
+    if not okRun then
+        warn('[ZkxHub] payload errored — ' .. tostring(err))
+    end
+end
