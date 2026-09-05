@@ -334,7 +334,7 @@ if writefile and isfolder and makefolder and getcustomasset then
 		writefile(
 			`lucide-icons/{spritesheet}.png`,
 			game:HttpGet(
-				`https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/refs/heads/main/spritesheets/{spritesheet}.png`
+				`https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/e8b0019ebd7e18c455bbbd720ed7b610bc6675f7/spritesheets/{spritesheet}.png`
 			)
 		)
 	end
@@ -37676,9 +37676,29 @@ ErrorReporter.set_game(GameName)
                 local getWeaponData = RivalsCosmetics.ResolvePlayerDataGetWeaponDataFunction()
                 local playerDataUtility = RivalsCosmetics.ResolvePlayerDataUtility()
                 if type(getWeaponData) ~= 'function' or type(playerDataUtility) ~= 'table'
-                    or type(debug.getconstants) ~= 'function' or type(debug.setconstant) ~= 'function' then
-                    return false
-                end
+				    or type(debug.getconstants) ~= 'function' or type(debug.setconstant) ~= 'function' then
+				    -- debug.setconstant not available on this executor — fall back to
+				    -- directly overwriting the method on the controller's metatable.
+				    -- This is less surgical but works everywhere and does the same thing.
+				    local playerDataController = RivalsCosmetics.ResolvePlayerDataController()
+				    local mt = type(playerDataController) == 'table' and getmetatable(playerDataController) or nil
+				    local idx = type(mt) == 'table' and rawget(mt, '__index') or nil
+				    if type(idx) == 'table' then
+				        local original = rawget(idx, 'GetWeaponData')
+				        if type(original) == 'function' then
+				            rawset(idx, 'GetWeaponData', function(self, weaponName)
+				                local ok, data = pcall(original, self, weaponName)
+				                if not ok or data == nil then return data end
+				                if self ~= playerDataController or not RivalsCosmetics.IsEnabled() then
+				                    return data
+				                end
+				                return RivalsCosmetics.OverrideWeaponData(weaponName, data)
+				            end)
+				            return true
+				        end
+				    end
+				    return false
+				end
 
                 local constantIndex = nil
                 for index, value in pairs(debug.getconstants(getWeaponData)) do
