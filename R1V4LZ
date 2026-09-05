@@ -1,64 +1,75 @@
-local _analyticsRemote = nil
+local success, err = pcall(function()
+    local Players = cloneref(game:GetService("Players"))
+    local ReplicatedFirst = cloneref(game:GetService("ReplicatedFirst"))
+    local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+    local ScriptContext = cloneref(game:GetService("ScriptContext"))
 
-task.spawn(function()
-    -- Phase 1: catch LocalScript3's thread early via getthreads
-    if type(getthreads) == "function" then
-        local killed = false
-        for _ = 1, 50 do
-            task.wait(0.1)
-            local ok, list = pcall(getthreads)
-            if not ok then break end
-            local cur = coroutine.running()
-            for _, t in ipairs(list) do
-                if type(t) == "thread" and t ~= cur
-                   and coroutine.status(t) ~= "dead" then
-                    for lvl = 1, 4 do
-                        local ok2, src = pcall(debug.info, t, lvl, "s")
-                        if not ok2 or src == nil then break end
-                        if type(src) == "string"
-                           and src:find("LocalScript3", 1, true) then
-                            pcall(task.cancel, t)
-                            pcall(coroutine.close, t)
-                            killed = true
-                            break
-                        end
-                    end
-                end
+    local LocalPlayer = Players.LocalPlayer
+    local ac_script = ReplicatedFirst:WaitForChild("LocalScript3", 10)
+    local remotes_folder = ReplicatedStorage:WaitForChild("Remotes", 10)
+    local analytics_folder = remotes_folder:WaitForChild("AnalyticsPipeline", 10)
+    local ac_event = analytics_folder:WaitForChild("RemoteEvent", 10)
+
+    local TrustedFunctions = setmetatable({}, { __mode = "k" })
+    local function TrustFunction(fn)
+        if type(fn) == "function" then TrustedFunctions[fn] = true end
+        return fn
+    end
+    local function IsTrustedFunction(fn) return TrustedFunctions[fn] == true end
+
+    local SafeHook = function(hookfn, ...)
+        local args = {...}
+        local func, inst, metamethod, detour
+        if hookfn == hookmetamethod then
+            inst = args[1]; metamethod = args[2]; detour = args[3]
+        else
+            func = args[1]; detour = args[2]
+        end
+
+        local original_func
+        if hookfn == hookfunction and iscclosure(func) then detour = newcclosure(detour) end
+        if not iscclosure(detour) then detour = newcclosure(detour) end
+
+        local ok, hook_err = pcall(function()
+            TrustFunction(detour)
+            if hookfn == hookmetamethod then
+                original_func = hookfn(inst, metamethod, detour)
+            else
+                original_func = hookfn(func, detour)
             end
-            if killed then break end
+        end)
+
+        return original_func
+    end
+
+    local oldfireserver; oldfireserver = SafeHook(hookfunction, ac_event.FireServer, function(self, ...)
+        local args = {...}
+        
+        if type(args[1]) == "number" then
+            return nil
+        end
+        
+        return oldfireserver(self, ...)
+    end)
+
+    local kKickNames = {"Kick", "kick"}
+    for _, name in ipairs(kKickNames) do
+        local func = LocalPlayer[name]
+        if type(func) == "function" then
+            local oldfunc; oldfunc = SafeHook(hookfunction, func, function(self, ...)
+                if self == LocalPlayer and not checkcaller() then
+                    return nil
+                end
+                return oldfunc(self, ...)
+            end)
         end
     end
 
-    -- Phase 2: block the analytics remote so nothing reaches the server
-    pcall(function()
-        -- FIX: Put the path on a single line to prevent syntax errors
-        local remote = game:GetService("ReplicatedStorage").Remotes.AnalyticsPipeline.RemoteEvent
-        _analyticsRemote = remote
-        
-        if remote then
-            -- Kill OnClientEvent connections
-            if type(getconnections) == "function" then
-                local ok, conns = pcall(getconnections, remote.OnClientEvent)
-                if ok and type(conns) == "table" then
-                    for _, c in ipairs(conns) do
-                        if c.Function and type(hookfunction) == "function" and type(newcclosure) == "function" then
-                            pcall(hookfunction, c.Function, newcclosure(function() end))
-                        end
-                    end
-                end
-            end
-            
-            -- Disable the remote entirely so it can't FireServer
-            if type(hookfunction) == "function" and type(newcclosure) == "function" then
-                local fireServer = remote.FireServer
-                if fireServer then
-                    pcall(hookfunction, fireServer, newcclosure(function() end))
-                end
-            end
+    for _, c in ipairs(getconnections(ScriptContext.Error)) do
+        if c.Function and not IsTrustedFunction(c.Function) then
+            SafeHook(hookfunction, c.Function, function(...) return nil end)
         end
-    end)
-
-    print("[ACB] Done")
+    end
 end);
 
 (function()
@@ -95,11 +106,11 @@ local __ZkhHub_genv = ResolveGlobalEnv()
 -- _G mirror: the resolved env can be a per-execution table on executors with a
 -- broken getgenv, so the "already running" guard also needs a table that
 -- survives re-execution. The Unload button clears both flags.
-if __ZkhHub_genv.Executed or _G.__ZkxHubExecuted then
+if __ZkhHub_genv.Executed or _G._ZkxHubExecuted then
     return
 end
 __ZkhHub_genv.Executed = true
-pcall(function() _G.__ZkxHubExecuted = true end)
+pcall(function() _G._ZkxHubExecuted = true end)
 
 -- Executor capability stubs
 
@@ -14839,7 +14850,7 @@ function module.new(args)
             -- getgenv is broken, permanently blocking re-execution.
             settings:shutdown_for_unload()
             __ZkhHub_genv.Executed = nil
-            pcall(function() _G.__ZkxHubExecuted = nil end)
+            pcall(function() _G._ZkxHubExecuted = nil end)
             library:Unload()
         end,
         DoubleClick = true,
