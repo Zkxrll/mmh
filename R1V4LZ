@@ -15350,31 +15350,21 @@ return {
         local GetRoot = ctx.GetRoot
         local __ZkhHub_genv = ctx.Genv
         -- __ZkhHub_RAGEBOT_BEGIN__
-        -- ════════════════════════════════════════════════════════════
+        -- ════════════════════════════════════════════════════════════════
         --  827luahook Rage+PolarCore port
-        --  Maps ctx (RivalsRuntimeBridge/Options/Toggles/FighterDataCache/
-        --  GetChar/GetRoot/Genv) to the variables the 827luahook ragebot
-        --  expects, then runs the Rage+PolarCore blocks verbatim.
-        -- ════════════════════════════════════════════════════════════
+        -- ════════════════════════════════════════════════════════════════
 
-        -- ── Services ────────────────────────────────────────────────
         local RunService        = cloneref(game:GetService("RunService"))
         local Players           = cloneref(game:GetService("Players"))
         local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
         local CollectionService = cloneref(game:GetService("CollectionService"))
-        local lp  = Players.LocalPlayer
+        local lp       = Players.LocalPlayer
         local Workspace = cloneref(workspace)
         local Camera    = Workspace.CurrentCamera
         Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
             Camera = Workspace.CurrentCamera
         end)
 
-        -- ── Config bridge ────────────────────────────────────────────
-        -- Options in Rivals.luau uses the same Rage* key names as
-        -- 827luahook's Config table. We build a live-reading proxy so
-        -- raw reads (Config.RageMode, Config.Rage, etc.) go through
-        -- the UI options/toggles where available and fall back to
-        -- 827luahook defaults otherwise.
         local _cfgDefaults = {
             Rage = false, RageFireRateOverride = 0,
             RageRestoreWhileFiring = false, RageVoidMove = true,
@@ -15403,12 +15393,9 @@ return {
             PredictiveLead = true, LeadCap = 15, ServerProcessingMs = 30,
             SilentAimJitter = false, SilentAimJitterDeg = 1.5,
         }
-        -- Direct UI option mappings (Rivals.luau option ID -> Config key)
         local _cfgOptMap = {
-            P8S4T1  = "Rage",
-            P8S4T4  = "RagePrioritizeHackers",
-            P8S4S2  = "RageTapsPerFrame",
-            P8S4D1  = "RageOnEmpty",
+            P8S4T1 = "Rage", P8S4T4 = "RagePrioritizeHackers",
+            P8S4S2 = "RageTapsPerFrame", P8S4D1 = "RageOnEmpty",
         }
         local Config = setmetatable({}, {
             __index = function(_, k)
@@ -15422,12 +15409,9 @@ return {
                 end
                 return _cfgDefaults[k]
             end,
-            __newindex = function(_, k, v)
-                _cfgDefaults[k] = v
-            end,
+            __newindex = function(_, k, v) _cfgDefaults[k] = v end,
         })
 
-        -- ── State table (827luahook shape) ───────────────────────────
         local State = {
             Target = nil, CamPos = Vector3.zero,
             AimbotTarget = nil, AimbotPart = nil,
@@ -15464,7 +15448,6 @@ return {
             Shots = 0, Hits = 0,
         }
 
-        -- ── Rivals module bridge ─────────────────────────────────────
         local Rivals = {
             Ready = false, Fighter = nil, Util = nil,
             Enums = nil, ItemLib = nil, Cosmetics = nil,
@@ -15499,8 +15482,7 @@ return {
             Rivals.Cosmetics = _lhReq(_lhMod(ReplicatedStorage, {"Modules","CosmeticLibrary"}))
             local fcInst     = _lhMod(lp.PlayerScripts, {"Controllers","FighterController"})
             Rivals.Fighter   = _lhReq(fcInst)
-            if Rivals.Fighter and Rivals.Fighter.LocalFighter == nil then
-                -- Some builds expose it only after the character loads
+            if Rivals.Fighter then
                 local deadline2 = tick() + 10
                 while Rivals.Fighter.LocalFighter == nil and tick() < deadline2 do
                     task.wait(0.5)
@@ -15509,10 +15491,8 @@ return {
             Rivals.Ready = (Rivals.Util ~= nil and Rivals.Fighter ~= nil)
         end)
 
-        -- ── ViewAngle (declared here; populated after PolarCore) ────
-        local ViewAngle
+        local ViewAngle   -- assigned after PolarCore block
 
-        -- ── lib bridge ───────────────────────────────────────────────
         local lib = {
             Notify = function(msg, t)
                 pcall(function()
@@ -15522,14 +15502,12 @@ return {
             end
         }
 
-        -- ── Visuals stub ─────────────────────────────────────────────
-        -- Only Visuals.notifyTarget is called by Rage+PolarCore.
-        -- Full visual FX run under RivalsVisuals in the outer script.
+        -- Visuals.notifyTarget is the only Visuals call in Rage+PolarCore
         local Visuals = { notifyTarget = function() end }
 
-        -- ── Player cache helpers ──────────────────────────────────────
+        -- player cache for getSafePlayers
         local _safePlayersCache = nil
-        Players.PlayerAdded:Connect(function()   _safePlayersCache = nil end)
+        Players.PlayerAdded:Connect(function()    _safePlayersCache = nil end)
         Players.PlayerRemoving:Connect(function() _safePlayersCache = nil end)
 
 local function getSafePlayers()
@@ -16010,23 +15988,17 @@ end
 local function aimbotKeyDown()
     return isInputActive(Config.AimbotKey)
 end
-local Visuals = {}
-;(function()
 
 
-        -- ── hookGunModule (rage suppression only) ───────────────────
-        -- Prevents the gun's native StartShooting from also firing
-        -- while the 827luahook ragebot's polarFire is active.
+        -- ── hookGunModule (rage-suppression only) ───────────────────
         local _gunHooked = false
         local function hookGunModule()
-            if _gunHooked then return end
-            if not (Rivals.Ready and Rivals.Fighter and Rivals.Gun) then return end
+            if _gunHooked or not (Rivals.Ready and Rivals.Gun) then return end
             _gunHooked = true
             local oldStart = Rivals.Gun.StartShooting
             if type(oldStart) ~= "function" then return end
-            if setreadonly then pcall(setreadonly, Rivals.Gun, false) end
+            pcall(function() if setreadonly then setreadonly(Rivals.Gun, false) end end)
             Rivals.Gun.StartShooting = function(self, ...)
-                -- Suppress when ragebot's direct-fire mode is active
                 if Config.Rage == true and Config.RageDirectFire == true then
                     local isLocal = false
                     pcall(function()
@@ -16035,22 +16007,12 @@ local Visuals = {}
                     end)
                     if isLocal then return false end
                 end
-                local results = { oldStart(self, ...) }
-                pcall(function()
-                    if not self.ClientFighter or not self.ClientFighter.IsLocalPlayer then return end
-                    if Config.Rage then
-                        local camData = results[3]
-                        if typeof(camData) == "table" then
-                            if Rage._encodeRageShot(camData) then results[4] = true end
-                        end
-                    end
-                end)
-                return unpack(results)
+                return oldStart(self, ...)
             end
         end
         task.spawn(function()
             local deadline = tick() + 30
-            while (not Rivals.Gun or not Rivals.Fighter) and tick() < deadline do
+            while not Rivals.Gun and tick() < deadline do
                 if Rivals.Ready and not Rivals.Gun then
                     pcall(function()
                         Rivals.Gun   = _lhReq(_lhMod(lp.PlayerScripts, {"Modules","ItemTypes","Gun"}))
@@ -16062,7 +16024,6 @@ local Visuals = {}
             end
             pcall(hookGunModule)
         end)
-end)()
 
 local Rage = {}
 ;(function()
@@ -18919,11 +18880,7 @@ end)()
         local _rageWasEnabled = false
         local function _readRageToggle()
             local tog = Toggles and Toggles["P8S4T1"]
-            if tog and tog.Value ~= nil then
-                if tog.Value ~= true then return false end
-            else
-                return false
-            end
+            if not (tog and tog.Value == true) then return false end
             local kp = Options and Options["P8S4T1K"]
             if kp and type(kp.GetState) == "function" then
                 return kp:GetState() == true
@@ -18933,17 +18890,18 @@ end)()
 
         RivalsRuntimeBridge.ZkhHubRagebot = Rage
 
+        -- Lets the UI (built outside this closure) write to Config
+        RivalsRuntimeBridge.SetRageConfigKey = function(k, v)
+            _cfgDefaults[k] = v
+        end
+
+
         RivalsRuntimeBridge.UpdateZkhHubRagebot = function(_dt)
             local should = _readRageToggle()
             if should ~= _rageWasEnabled then
                 _rageWasEnabled = should
-                if should then
-                    _cfgDefaults.Rage = true
-                    pcall(Rage.enable)
-                else
-                    _cfgDefaults.Rage = false
-                    pcall(Rage.disable)
-                end
+                _cfgDefaults.Rage = should
+                if should then pcall(Rage.enable) else pcall(Rage.disable) end
             end
         end
 
@@ -39560,6 +39518,7 @@ ErrorReporter.set_game(GameName)
             end
 
             function RivalsCosmetics.EnsureNativeUiBindings()
+                pcall(RivalsCosmetics.EnsureWeaponCardSkinHook)
                 if RivalsCosmeticsState.NativeUiBound then
                     return true
                 end
@@ -39981,55 +39940,78 @@ ErrorReporter.set_game(GameName)
 
 
             function RivalsCosmetics.EnsureWeaponCardSkinHook()
-                -- Hooks ItemLibrary:GetViewModelImageFromWeaponData so the PickWeapons
-                -- weapon card shows the selected skin image instead of the base weapon.
-                if RivalsCosmeticsState.WeaponCardSkinHooked then
-                    return true
-                end
+                -- Hooks ItemLibrary.GetViewModelImageFromWeaponData so the PickWeapons
+                -- weapon card shows the selected skin image instead of the base image.
+                --
+                -- Fixes vs v3:
+                --   rawget() returned nil for inherited methods → now uses plain index
+                --   hookfunction is tried first; table-replacement is the fallback
+                --   ResolveSkinSelectionValue called directly to bypass IsEnabled gate
+                if RivalsCosmeticsState.WeaponCardSkinHooked then return true end
 
                 local itemLibrary = RivalsCosmetics.ResolveItemLibrary()
-                if type(itemLibrary) ~= 'table' then
-                    return false
-                end
+                if type(itemLibrary) ~= 'table' then return false end
 
-                local original = rawget(itemLibrary, 'GetViewModelImageFromWeaponData')
-                if type(original) ~= 'function' then
-                    return false
-                end
+                -- Index lookup (not rawget) so metatable-inherited methods are found too
+                local original = nil
+                pcall(function() original = itemLibrary.GetViewModelImageFromWeaponData end)
+                if type(original) ~= 'function' then return false end
 
-                if type(setreadonly) == 'function' then
-                    pcall(setreadonly, itemLibrary, false)
-                end
-
-                local ok = pcall(function()
-                    itemLibrary.GetViewModelImageFromWeaponData = function(lib, wdata, hires)
-                        if type(wdata) == 'table' and type(wdata.Name) == 'string' then
-                            local skinName = RivalsCosmetics.ResolveSelectedSkinName(wdata.Name)
-                            if skinName ~= nil then
-                                local cosmeticLibrary = RivalsCosmetics.ResolveCosmeticLibrary()
-                                local viewModels = type(cosmeticLibrary) == 'table'
-                                    and cosmeticLibrary.ViewModels or nil
-                                if type(viewModels) == 'table' then
-                                    local info = viewModels[skinName]
-                                    if type(info) == 'table' then
-                                        local img = (hires and info.ImageHighResolution) or info.Image
-                                        if img ~= nil then return img end
-                                    end
-                                end
+                local function detour(lib, wdata, hires)
+                    if type(wdata) == 'table' and type(wdata.Name) == 'string' then
+                        local skinName = nil
+                        pcall(function()
+                            -- ResolveSkinSelectionValue directly — bypasses IsEnabled()
+                            -- so the card updates even mid-apply
+                            local raw = RivalsCosmetics.ResolveSkinSelectionValue(wdata.Name)
+                            if RivalsCosmetics.IsCosmeticValueSelected(raw) then
+                                skinName = raw
                             end
+                        end)
+                        if skinName ~= nil then
+                            local img = nil
+                            pcall(function()
+                                -- lib IS the ItemLibrary; lib.ViewModels maps skin names
+                                -- to {Image, ImageHighResolution} (matches 827luahook)
+                                local info = lib.ViewModels and lib.ViewModels[skinName]
+                                if type(info) == 'table' then
+                                    img = (hires and info.ImageHighResolution) or info.Image
+                                end
+                            end)
+                            if img ~= nil then return img end
                         end
-                        return original(lib, wdata, hires)
                     end
-                end)
+                    return original(lib, wdata, hires)
+                end
 
-                if not ok then return false end
+                -- Path A: hookfunction (handles metatables properly)
+                local hooked = false
+                if type(hookfunction) == 'function' then
+                    local ok2, orig2 = pcall(hookfunction, original, detour)
+                    if ok2 and type(orig2) == 'function' and orig2 ~= detour then
+                        original = orig2
+                        hooked = true
+                    end
+                end
+
+                -- Path B: table-replacement (works on writable tables)
+                if not hooked then
+                    pcall(function()
+                        if type(setreadonly) == 'function' then setreadonly(itemLibrary, false) end
+                    end)
+                    local ok3 = pcall(function()
+                        itemLibrary.GetViewModelImageFromWeaponData = detour
+                    end)
+                    hooked = ok3
+                end
+
+                if not hooked then return false end
                 RivalsCosmeticsState.WeaponCardSkinHooked = true
                 return true
             end
 
             function RivalsCosmetics.RestoreWeaponCardSkinHook()
                 if not RivalsCosmeticsState.WeaponCardSkinHooked then return end
-                -- Force re-resolve and re-hook on the next ApplyAll pass.
                 RivalsCosmeticsState.WeaponCardSkinHooked = false
                 if RivalsCosmetics.Catalog then
                     RivalsCosmetics.Catalog.ItemLibrary = nil
@@ -45513,76 +45495,172 @@ ErrorReporter.set_game(GameName)
             end
 
             BuildRivalsRagebotUi = function(AutomationTab)
-                local RagebotGroup = AutomationTab:AddLeftGroupbox('Ragebot')
-                local ragebotToggle = RagebotGroup:AddToggle('P8S4T1', {
-                    Text = 'Ragebot',
+                -- 827luahook Rage UI port — Core/Defense tabbox + Weapon/Melee groupbox
+                local function cfg(k, v)
+                    if RivalsRuntimeBridge.SetRageConfigKey then
+                        RivalsRuntimeBridge.SetRageConfigKey(k, v)
+                    end
+                end
+
+                local RageLTB = AutomationTab:AddLeftTabbox('Ragebot')
+                local CORE    = RageLTB:AddTab('Core')
+                local DEF     = RageLTB:AddTab('Defense')
+                local WEP     = AutomationTab:AddRightGroupbox('Weapon & Melee')
+
+                -- ── Core tab ──────────────────────────────────────────────────────
+                local ragebotToggle = CORE:AddToggle('P8S4T1', {
+                    Text    = 'Enable Rage',
                     Default = false,
-                    Tooltip = 'Fully automatic ragebot: aims and eliminates enemies on its own. Standalone - Aimbot and Triggerbot are not needed.',
+                    Tooltip = 'PolarCore void ragebot. Teleports OOB and fires through the void.',
                 })
                 ragebotToggle:AddKeyPicker('P8S4T1K', {
-                    Default = 'Unknown',
-                    Mode = 'Always',
-                    Text = 'Ragebot',
-                    NoUI = false,
+                    Default          = 'Unknown',
+                    Mode             = 'Toggle',
+                    SyncToggleState  = true,
+                    Text             = 'Rage',
                 })
-                -- Ragebot settings match ZkhHub's recovered page ("gV" builder, source ~258008):
-                -- Stability 0..1.5 step .001, Shoot Frames 1..5, Prioritize Hackers, per-weapon
-                -- toggles, On Empty, and the Random/Translocate evasion groups. ZkhHub exposes NO
-                -- ProjectileBreaker sliders (hardcoded defaults) and its Weapon Priority reorder
-                -- (OrderedList) has no Obsidian equivalent, so priority stays config order.
-                RagebotGroup:AddToggle('P8S4T4', {
-                    Text = 'Prioritize Hackers',
-                    Default = false,
-                    Tooltip = 'Target flagged cheaters first when present.',
+                CORE:AddDropdown('RageMode', {
+                    Values   = { 'Polar', 'Orbit' },
+                    Default  = 'Polar',
+                    Text     = 'Mode',
+                    Tooltip  = 'Polar: classic void teleport. Orbit: circles the target from OOB.',
+                    Callback = function(v) cfg('RageMode', v) end,
                 })
-                RagebotGroup:AddSlider('P8S4S1', {
-                    Text = 'Stability',
-                    Default = 0.15, Min = 0, Max = 1.5, Rounding = 3, Compact = true,
-                    Tooltip = 'How long a target may sit out of bounds before the bot stops firing at it.',
+                CORE:AddDivider()
+                CORE:AddDropdown('RageGumMode', {
+                    Values   = { 'off', 'lite', 'on' },
+                    Default  = 'on',
+                    Text     = 'Gum',
+                    Tooltip  = 'Physics-hack intensity. "on" is most reliable.',
+                    Callback = function(v) cfg('RageGumMode', v) end,
                 })
-                RagebotGroup:AddSlider('P8S4S2', {
-                    Text = 'Shoot Frames',
-                    Default = 1, Min = 1, Max = 5, Rounding = 0, Compact = true,
-                    Tooltip = 'Fire once every N frames. 1 = every frame (fastest).',
+                CORE:AddDropdown('RageVoidDepth', {
+                    Values   = { 'shallow', 'deep' },
+                    Default  = 'deep',
+                    Text     = 'Hide depth',
+                    Tooltip  = 'How far below the kill plane to park. Deep is harder to spot.',
+                    Callback = function(v) cfg('RageVoidDepth', v) end,
                 })
-                RagebotGroup:AddToggle('P8S4T5', { Text = 'Use Primary', Default = true })
-                RagebotGroup:AddToggle('P8S4T6', { Text = 'Use Secondary', Default = true })
-                RagebotGroup:AddToggle('P8S4T7', { Text = 'Use Melee', Default = true })
-                RagebotGroup:AddDropdown('P8S4D1', {
-                    Values = { 'Swap', 'Reload', 'SwapOrReload' },
-                    Default = 'SwapOrReload',
-                    Multi = false,
-                    Text = 'On Empty',
-                    Tooltip = 'What to do when the chosen gun runs out of ammo.',
+                CORE:AddToggle('RageGatePoison', {
+                    Text     = 'Gate poison',
+                    Default  = true,
+                    Tooltip  = 'Block incoming teleports while voided.',
+                    Callback = function(v) cfg('RageGatePoison', v) end,
                 })
-                RagebotGroup:AddDropdown('P8S4D2', {
-                    Values = { 'Random', 'Translocate', 'ProjectileBreaker' },
-                    Default = 'Random',
-                    Multi = false,
-                    Text = 'Evasion Mode',
-                    Tooltip = 'How to move when there is no target to shoot. Random scatters you far away, Translocate drops you onto an out-of-bounds part, Projectile Breaker hides behind cover.',
+                CORE:AddToggle('RagePredictPrefire', {
+                    Text     = 'Prefire resurface',
+                    Default  = true,
+                    Tooltip  = 'Fire before resurfacing for faster kills.',
+                    Callback = function(v) cfg('RagePredictPrefire', v) end,
                 })
-                local RandomEvasionBox = RagebotGroup:AddDependencyBox()
-                RandomEvasionBox:AddToggle('P8S4T8', {
-                    Text = 'Character Origin',
-                    Default = false,
-                    Tooltip = 'Evasion (Random): scatter around your character instead of the map origin.',
+                CORE:AddDivider()
+                CORE:AddToggle('RageSkipImmune', {
+                    Text     = 'Hold fire on immune',
+                    Default  = true,
+                    Tooltip  = 'Do not fire at spawn-protected players.',
+                    Callback = function(v) cfg('RageSkipImmune', v) end,
                 })
-                RandomEvasionBox:AddSlider('P8S4S4', {
-                    Text = 'Base Radius', Default = 100, Min = 5, Max = 100000000, Rounding = 0, Compact = true,
-                    Tooltip = 'Evasion (Random): how far away to scatter.',
+                CORE:AddToggle('RagePrioritizeHackers', {
+                    Text     = 'Target cheaters first',
+                    Default  = false,
+                    Tooltip  = 'Prioritise flagged cheaters over regular players.',
+                    Callback = function(v) cfg('RagePrioritizeHackers', v) end,
                 })
-                RandomEvasionBox:AddSlider('P8S4S5', {
-                    Text = 'Random Range', Default = 0.5, Min = 0, Max = 1, Rounding = 1, Compact = true,
-                    Tooltip = 'Evasion (Random): extra randomness on the scatter distance.',
+                CORE:AddToggle('RagePhysicsFlags', {
+                    Text     = 'Physics flags',
+                    Default  = true,
+                    Tooltip  = 'Patch FFlags for better history buffer (recommended).',
+                    Callback = function(v) cfg('RagePhysicsFlags', v) end,
                 })
-                RandomEvasionBox:SetupDependencies({ { Options.P8S4D2, 'Random' } })
-                local TranslocateEvasionBox = RagebotGroup:AddDependencyBox()
-                TranslocateEvasionBox:AddSlider('P8S4S3', {
-                    Text = 'Offset', Default = -5, Min = -5, Max = 5, Rounding = 1, Compact = true,
-                    Tooltip = 'Evasion (Translocate): vertical offset on the out-of-bounds part.',
+                CORE:AddDivider()
+                -- Orbit-only options shown when Mode = Orbit
+                local orbitDep = CORE:AddDependencyBox()
+                orbitDep:AddSlider('RageCombatOrbitRadius', {
+                    Text     = 'Orbit radius',
+                    Default  = 60, Min = 20, Max = 380, Rounding = 0, Compact = true,
+                    Callback = function(v) cfg('RageCombatOrbitRadius', v) end,
                 })
-                TranslocateEvasionBox:SetupDependencies({ { Options.P8S4D2, 'Translocate' } })
+                orbitDep:AddSlider('RageOrbitDwell', {
+                    Text     = 'Vantage time',
+                    Default  = 0.30, Min = 0.10, Max = 0.60, Rounding = 2, Compact = true,
+                    Callback = function(v) cfg('RageOrbitDwell', v) end,
+                })
+                orbitDep:AddSlider('RageCombatOrbitHeight', {
+                    Text     = 'Orbit height',
+                    Default  = 8, Min = 0, Max = 40, Rounding = 0, Compact = true,
+                    Callback = function(v) cfg('RageCombatOrbitHeight', v) end,
+                })
+                orbitDep:AddToggle('RageCombatOrbitJitter', {
+                    Text     = 'Vertical jitter',
+                    Default  = true,
+                    Callback = function(v) cfg('RageCombatOrbitJitter', v) end,
+                })
+                orbitDep:SetupDependencies({ { Options.RageMode, 'Orbit' } })
+
+                -- ── Defense tab ───────────────────────────────────────────────────
+                DEF:AddToggle('RageAttackTranslocate', {
+                    Text     = 'Bait Pulse',
+                    Default  = false,
+                    Tooltip  = 'Translocate-bait enemies while voided.',
+                    Callback = function(v) cfg('RageAttackTranslocate', v) end,
+                })
+                DEF:AddDivider()
+                DEF:AddDropdown('RageRestoreMode', {
+                    Values   = { 'auto', 'none', 'render', 'kerp' },
+                    Default  = 'auto',
+                    Text     = 'Park transport',
+                    Tooltip  = 'Method used to move you OOB. auto switches between kerp and render on losses.',
+                    Callback = function(v) cfg('RageRestoreMode', v) end,
+                })
+                DEF:AddLabel('auto: kerp ↔ render on round losses')
+                DEF:AddToggle('RageCameraAnchor', {
+                    Text     = 'Camera anchor',
+                    Default  = true,
+                    Tooltip  = 'Keep camera above ground while voided so the screen does not go black.',
+                    Callback = function(v) cfg('RageCameraAnchor', v) end,
+                })
+                DEF:AddToggle('RageVoidMove', {
+                    Text     = 'Void move',
+                    Default  = true,
+                    Tooltip  = 'Move position inside the void each fire to evade position tracking.',
+                    Callback = function(v) cfg('RageVoidMove', v) end,
+                })
+
+                -- ── Weapon & Melee groupbox ───────────────────────────────────────
+                WEP:AddDropdown('RageOnEmpty', {
+                    Values   = { 'Swap', 'Reload' },
+                    Default  = 'Swap',
+                    Text     = 'On empty',
+                    Callback = function(v) cfg('RageOnEmpty', v) end,
+                })
+                WEP:AddDropdown('RagePreferredSlot', {
+                    Values   = { 'Primary', 'Secondary', 'Melee' },
+                    Default  = 'Primary',
+                    Text     = 'Prefer slot',
+                    Callback = function(v) cfg('RagePreferredSlot', v) end,
+                })
+                WEP:AddDivider()
+                WEP:AddToggle('AvoidDeflect', {
+                    Text     = 'Avoid katana deflect',
+                    Default  = true,
+                    Callback = function(v) cfg('AvoidDeflect', v) end,
+                })
+                WEP:AddToggle('RageShieldBackstab', {
+                    Text     = 'Shield bypass',
+                    Default  = true,
+                    Callback = function(v) cfg('RageShieldBackstab', v) end,
+                })
+                WEP:AddToggle('RageKnifeBackstab', {
+                    Text     = 'Force knife backstabs',
+                    Default  = true,
+                    Callback = function(v) cfg('RageKnifeBackstab', v) end,
+                })
+                WEP:AddToggle('RageKnifeBot', {
+                    Text     = 'Knife bot',
+                    Default  = true,
+                    Tooltip  = 'Auto-swing knife when target is in range (Polar mode only).',
+                    Callback = function(v) cfg('RageKnifeBot', v) end,
+                })
             end
 
             BuildRivalsCosmeticsUi = function(MiscTab)
