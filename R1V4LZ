@@ -39396,6 +39396,10 @@ ErrorReporter.set_game(GameName)
                 pcall(RivalsCosmetics.ReloadWeaponViewModel, weaponName)
                 pcall(RivalsCosmetics.ApplyWraps)
                 pcall(RivalsCosmetics.RefreshNativeCosmeticsScene)
+                pcall(RivalsCosmetics.RefreshWeaponCardIcons)
+                -- The hotbar can rebuild a frame or two after the selection lands; re-stamp once
+                -- more shortly after so the HUD card catches up without a manual re-equip.
+                task.delay(0.15, function() pcall(RivalsCosmetics.RefreshWeaponCardIcons) end)
                 RivalsCosmetics.QueueNativeStateSave()
                 return true
             end
@@ -40070,6 +40074,258 @@ ErrorReporter.set_game(GameName)
                 RivalsCosmeticsState.ClientEntityPlayFinisherWrapper = nil
                 RivalsCosmeticsState.ClientEntityFinisherHooked = false
 
+                return true
+            end
+
+            -- The 3D viewmodel rebuild only fixes the weapon held in the world / the loadout
+            -- preview. The 2D weapon card (the bottom-left HUD slot, and the inventory cards)
+            -- is a flat image the game generates through ItemLibrary:GetViewModelImageFromWeaponData,
+            -- which is handed the weapon's *inventory* data (Name = the base weapon), so it always
+            -- returned the default image regardless of the equipped skin. Port of the 827luahook
+            -- GetViewModelImageFromWeaponData hook: when a skin is selected for that weapon, return
+            -- the skin's own card image instead.
+            function RivalsCosmetics.EnsureViewModelImageHook()
+                if RivalsCosmeticsState.ViewModelImageHooked then
+                    return true
+                end
+
+                local itemLibrary = RivalsCosmetics.ResolveItemLibrary()
+                if type(itemLibrary) ~= 'table' or type(itemLibrary.GetViewModelImageFromWeaponData) ~= 'function' then
+                    return false
+                end
+
+                local originalGetImage = itemLibrary.GetViewModelImageFromWeaponData
+
+                -- Direct ViewModels image lookup (the raw 827luahook path): the skin's card
+                -- art lives at ItemLibrary.ViewModels[<skin name>].Image / .ImageHighResolution.
+                local function resolveSkinCardImage(lib, skinName, hires)
+                    local image = nil
+                    pcall(function()
+                        local viewModels = rawget(lib, 'ViewModels')
+                        if type(viewModels) ~= 'table' then
+                            viewModels = lib.ViewModels
+                        end
+                        local info = type(viewModels) == 'table' and viewModels[skinName] or nil
+                        if type(info) == 'table' then
+                            if hires and info.ImageHighResolution ~= nil then
+                                image = info.ImageHighResolution
+                            else
+                                image = info.Image
+                            end
+                        end
+                    end)
+                    return image
+                end
+
+                local wrappedGetImage = function(self, weaponData, hires, ...)
+                    -- Capture varargs up front: Luau forbids '...' inside the nested pcall
+                    -- closures below, so pack it here and unpack it where needed.
+                    local extraArgs = table.pack(...)
+                    local skinName = nil
+                    if type(weaponData) == 'table' then
+                        local weaponName = weaponData.Name
+                        if type(weaponName) ~= 'string' or weaponName == '' then
+                            weaponName = weaponData[RivalsCosmetics.EncodeGameKey('Name')]
+                        end
+                        if type(weaponName) == 'string' and weaponName ~= '' then
+                            skinName = RivalsCosmetics.ResolveSelectedSkinName(weaponName)
+                        end
+                    end
+
+                    if type(skinName) == 'string' and skinName ~= '' then
+                        -- Default image the game would have drawn for this (skinless) card.
+                        local fallback = nil
+                        pcall(function() fallback = originalGetImage(self, weaponData, hires, table.unpack(extraArgs, 1, extraArgs.n)) end)
+
+                        -- Path A -- the game's own renderer, handed a copy of the weapon data
+                        -- with the skin injected (both plain and enum-encoded key), i.e. exactly
+                        -- what a legitimately equipped skin looks like to the card generator.
+                        local injected = nil
+                        pcall(function()
+                            local clone = table.clone(weaponData)
+                            local skinData = RivalsCosmetics.BuildCosmeticData(nil, skinName, 'Skin')
+                                or { Name = skinName }
+                            clone.Skin = skinData
+                            clone[RivalsCosmetics.EncodeGameKey('Skin')] = skinData
+                            injected = originalGetImage(self, clone, hires, table.unpack(extraArgs, 1, extraArgs.n))
+                        end)
+
+                        -- Path B -- direct ViewModels art lookup.
+                        local direct = resolveSkinCardImage(self, skinName, hires)
+
+                        -- Prefer whichever actually differs from the default weapon art, so a
+                        -- card that ignores one mechanism still picks up the other.
+                        if direct ~= nil and direct ~= fallback then
+                            return direct
+                        end
+                        if injected ~= nil and injected ~= fallback then
+                            return injected
+                        end
+                        if direct ~= nil then
+                            return direct
+                        end
+                        if injected ~= nil then
+                            return injected
+                        end
+                        if fallback ~= nil then
+                            return fallback
+                        end
+                    end
+
+                    return originalGetImage(self, weaponData, hires, ...)
+                end
+
+                RivalsCosmeticsState.HookedImageItemLibrary = itemLibrary
+                RivalsCosmeticsState.OriginalGetViewModelImage = originalGetImage
+                RivalsCosmeticsState.GetViewModelImageWrapper = wrappedGetImage
+                itemLibrary.GetViewModelImageFromWeaponData = wrappedGetImage
+
+                -- The in-combat HUD weapon card and the inventory/hotbar icons take the OTHER
+                -- route: ItemLibrary:GetViewModelImage(<weapon name>) with the BASE weapon name
+                -- and no weapon data, so it never sees the equipped skin and draws the default.
+                -- (Confirmed against the live game: that function is invoked with a plain name
+                -- string, ~5x more often than GetViewModelImageFromWeaponData, and handing it the
+                -- skin's name returns the skin art.) Remap the base name to the selected skin so
+                -- those icons match the equipped skin as well.
+                if type(itemLibrary.GetViewModelImage) == 'function' then
+                    local originalPlainGetImage = itemLibrary.GetViewModelImage
+                    local wrappedPlainGetImage = function(self, weaponName, ...)
+                        -- Capture varargs up front: Luau forbids '...' inside the nested pcall.
+                        local packedRest = table.pack(...)
+                        if type(weaponName) == 'string' and weaponName ~= '' then
+                            local skinName = nil
+                            pcall(function()
+                                skinName = RivalsCosmetics.ResolveSelectedSkinName(weaponName)
+                            end)
+                            -- Only remap a base weapon that has a distinct skin selected. When the
+                            -- name is already a skin (e.g. a nested call from the weapon-data path),
+                            -- ResolveSelectedSkinName returns nil and we fall straight through.
+                            if type(skinName) == 'string' and skinName ~= '' and skinName ~= weaponName then
+                                local remapped = nil
+                                local ok = pcall(function()
+                                    remapped = originalPlainGetImage(self, skinName, table.unpack(packedRest, 1, packedRest.n))
+                                end)
+                                if ok and remapped ~= nil then
+                                    return remapped
+                                end
+                            end
+                        end
+                        return originalPlainGetImage(self, weaponName, table.unpack(packedRest, 1, packedRest.n))
+                    end
+                    RivalsCosmeticsState.OriginalPlainGetViewModelImage = originalPlainGetImage
+                    RivalsCosmeticsState.PlainGetViewModelImageWrapper = wrappedPlainGetImage
+                    itemLibrary.GetViewModelImage = wrappedPlainGetImage
+                end
+
+                RivalsCosmeticsState.ViewModelImageHooked = true
+                return true
+            end
+
+            function RivalsCosmetics.RestoreViewModelImageHook()
+                local itemLibrary = RivalsCosmeticsState.HookedImageItemLibrary
+                local originalGetImage = RivalsCosmeticsState.OriginalGetViewModelImage
+                local wrappedGetImage = RivalsCosmeticsState.GetViewModelImageWrapper
+                if type(itemLibrary) == 'table' and type(originalGetImage) == 'function' then
+                    if itemLibrary.GetViewModelImageFromWeaponData == wrappedGetImage then
+                        itemLibrary.GetViewModelImageFromWeaponData = originalGetImage
+                    end
+                end
+
+                local originalPlainGetImage = RivalsCosmeticsState.OriginalPlainGetViewModelImage
+                local wrappedPlainGetImage = RivalsCosmeticsState.PlainGetViewModelImageWrapper
+                if type(itemLibrary) == 'table' and type(originalPlainGetImage) == 'function' then
+                    if itemLibrary.GetViewModelImage == wrappedPlainGetImage then
+                        itemLibrary.GetViewModelImage = originalPlainGetImage
+                    end
+                end
+
+                RivalsCosmeticsState.HookedImageItemLibrary = nil
+                RivalsCosmeticsState.OriginalGetViewModelImage = nil
+                RivalsCosmeticsState.GetViewModelImageWrapper = nil
+                RivalsCosmeticsState.OriginalPlainGetViewModelImage = nil
+                RivalsCosmeticsState.PlainGetViewModelImageWrapper = nil
+                RivalsCosmeticsState.ViewModelImageHooked = false
+                return true
+            end
+
+            -- The GetViewModelImage hook only changes what a FUTURE draw produces. The weapon
+            -- cards already on screen (the bottom-right Hotbar slots and the EquippedDisplay
+            -- icon) were drawn once when the hotbar was built -- before the hub selection existed
+            -- -- and the game never redraws them just because a cosmetic changed, so they keep the
+            -- default art until the next equip or round. This re-stamps the local player's HUD
+            -- weapon-card ImageLabels with the selected skin's art directly, keyed by the Hotbar
+            -- slot name (each slot is named after its weapon) or, failing that, by matching the
+            -- label's current image back to a base weapon. Confirmed live: these icons are
+            -- ImageLabels whose .Image is ItemLibrary.ViewModels[<name>].Image.
+            function RivalsCosmetics.RefreshWeaponCardIcons()
+                pcall(function()
+                    local itemLibrary = RivalsCosmetics.ResolveItemLibrary()
+                    local viewModels = type(itemLibrary) == 'table' and itemLibrary.ViewModels or nil
+                    if type(viewModels) ~= 'table' or not LP then
+                        return
+                    end
+                    local playerGui = LP:FindFirstChild('PlayerGui')
+                    local mainGui = playerGui and playerGui:FindFirstChild('MainGui')
+                    local mainFrame = mainGui and mainGui:FindFirstChild('MainFrame')
+                    local fighterInterfaces = mainFrame and mainFrame:FindFirstChild('FighterInterfaces')
+                    if not fighterInterfaces then
+                        return
+                    end
+                    -- Only the local player's own interface; other entries are spectated players.
+                    local iface = fighterInterfaces:FindFirstChild(LP.Name)
+                    if not iface then
+                        return
+                    end
+
+                    -- base card image (either resolution) -> weapon, so a label showing a base
+                    -- weapon icon can be identified even when its container is not the slot.
+                    local baseImageToWeapon = {}
+                    for _, weaponName in ipairs(RivalsCosmetics.ResolveWeaponNames()) do
+                        local vm = viewModels[weaponName]
+                        if type(vm) == 'table' then
+                            if type(vm.Image) == 'string' then
+                                baseImageToWeapon[vm.Image] = { weapon = weaponName, hires = false }
+                            end
+                            if type(vm.ImageHighResolution) == 'string' then
+                                baseImageToWeapon[vm.ImageHighResolution] = { weapon = weaponName, hires = true }
+                            end
+                        end
+                    end
+
+                    for _, label in ipairs(iface:GetDescendants()) do
+                        if label:IsA('ImageLabel') then
+                            local currentImage = label.Image
+                            local weaponName = nil
+                            local wantHires = false
+                            local parent = label.Parent
+                            -- Preferred: a Hotbar slot is named after its weapon, and the weapon
+                            -- art within it is the child named 'Icon'. The name guard is required:
+                            -- the sibling 'Background'/'Button' live under the same weapon-named
+                            -- slot and must NOT be rewritten with the weapon image.
+                            if label.Name == 'Icon' and parent and type(parent.Name) == 'string'
+                                and viewModels[parent.Name] then
+                                weaponName = parent.Name
+                                wantHires = type(currentImage) == 'string'
+                                    and viewModels[parent.Name].ImageHighResolution == currentImage
+                            elseif type(currentImage) == 'string' and baseImageToWeapon[currentImage] then
+                                weaponName = baseImageToWeapon[currentImage].weapon
+                                wantHires = baseImageToWeapon[currentImage].hires
+                            end
+                            if weaponName then
+                                local skinName = RivalsCosmetics.ResolveSelectedSkinName(weaponName)
+                                if type(skinName) == 'string' and skinName ~= '' and skinName ~= weaponName then
+                                    local svm = viewModels[skinName]
+                                    if type(svm) == 'table' then
+                                        local newImage = (wantHires and svm.ImageHighResolution) or svm.Image
+                                        if type(newImage) == 'string' and label.Image ~= newImage then
+                                            label.Image = newImage
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
                 return true
             end
 
@@ -42247,6 +42503,13 @@ ErrorReporter.set_game(GameName)
             end
 
             function RivalsCosmetics.ReloadWeaponViewModel(weaponName, force, restoreOnly)
+                -- Every skin-change path (native customize menu AND the hub's own dropdowns)
+                -- funnels through here to rebuild the held 3D viewmodel. Re-stamp the 2D HUD
+                -- weapon cards from the same spot so they never fall out of sync, and do it
+                -- before the early-out below so it still runs for a weapon that is not the one
+                -- currently held (its hotbar slot icon still needs the skin).
+                pcall(RivalsCosmetics.RefreshWeaponCardIcons)
+
                 local item, fighter = RivalsCosmetics.ResolveClientItemForWeapon(weaponName)
                 local viewModel = type(item) == 'table' and rawget(item, 'ViewModel') or nil
                 local viewModelData = type(viewModel) == 'table' and rawget(viewModel, 'Data') or nil
@@ -42269,9 +42532,19 @@ ErrorReporter.set_game(GameName)
                 local restoreData = RivalsCosmetics.GetClientItemRestoreData(LP, weaponName)
                 local nextData
                 if type(selection) == 'table' then
+                    -- Seed the base weapon name under the SAME encoded key that
+                    -- ApplyZkhHubViewModelSelection writes the skin to. Seeding a plaintext
+                    -- { Name = weaponName } here left two Name entries (plaintext + encoded);
+                    -- the EncodeGameTable pass below then folded the plaintext one back onto
+                    -- the skin's enum key, and pairs() order let the default weaponName wipe
+                    -- the skin -- so a skin-only change rendered the default weapon and only
+                    -- appeared after a charm equip forced a full weapon-data rebuild. Keying
+                    -- the seed up front makes the skin cleanly overwrite the same slot.
+                    local baseData = {}
+                    baseData[RivalsCosmetics.EncodeGameKey('Name')] = weaponName
                     nextData = RivalsCosmetics.ApplyZkhHubViewModelSelection(
                         weaponName,
-                        { Name = weaponName },
+                        baseData,
                         selection
                     )
                 else
@@ -42566,6 +42839,7 @@ ErrorReporter.set_game(GameName)
                 end
                 RivalsCosmetics.RestoreClientViewModelHook()
                 RivalsCosmetics.RestoreFinisherHook()
+                RivalsCosmetics.RestoreViewModelImageHook()
                 if not RivalsEmotes.IsEnabled() then
                     RivalsEmotes.RestoreEmoteControllerHook()
                 end
@@ -42625,6 +42899,8 @@ ErrorReporter.set_game(GameName)
                 pcall(RivalsCosmetics.ApplySelectedWeaponCosmetics)
                 pcall(RivalsCosmetics.ApplyActiveWeaponCosmetics)
                 pcall(RivalsCosmetics.EnsureFinisherHook)
+                pcall(RivalsCosmetics.EnsureViewModelImageHook)
+                pcall(RivalsCosmetics.RefreshWeaponCardIcons)
                 pcall(RivalsEmotes.ApplyAll)
                 pcall(RivalsCosmetics.ApplyWraps)
                 pcall(RivalsCosmetics.BindSpawnedWorldCosmetics)
