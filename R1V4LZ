@@ -182,6 +182,19 @@ do
         _stubbed.firetouchinterest = true
     end
 
+    -- Executors disagree on the name for the queue-on-teleport API:
+    -- queue_on_teleport (underscore) vs queueonteleport (no underscore) vs
+    -- syn.queue_on_teleport. Alias whatever exists onto the underscore name so
+    -- the capability probe below and every call site resolve it.
+    if type(_genv.queue_on_teleport) ~= 'function' then
+        local _qot = (type(queueonteleport) == 'function' and queueonteleport)
+            or (type(syn) == 'table' and type(syn.queue_on_teleport) == 'function' and syn.queue_on_teleport)
+            or nil
+        if _qot then
+            _genv.queue_on_teleport = _qot
+        end
+    end
+
     -- Globals used by the hook that get no stub (call sites handle nil), but
     -- that support checks still need to know about.
     for _, name in ipairs({ 'queue_on_teleport', 'sethiddenproperty', 'gethiddenproperty', 'getrenv', 'getcallingscript' }) do
@@ -14350,11 +14363,14 @@ __ZkhHub_shared.script_paths = function()
 local DisplayName = 'ZkxHub'
 local StorageRoot = 'ZkxHub'
 
--- Where queue_on_teleport should re-read the script from when "Auto Execute on
--- Teleport" is enabled. Save the built script to this path (relative to your
--- executor's workspace folder) for that option to work. If you load the script
--- from a URL instead, replace the body of queue_on_teleport_script() below with
--- your own loadstring line.
+-- [PATCH] Auto Execute re-runs your JNKIE loader after a teleport instead of
+-- reading a copy off disk. The full source streams from JNKIE into memory and is
+-- never written to the workspace, so a paying user cannot lift the script out of a
+-- plain-text file. To rotate it, change LoaderUrl to the exact line your users
+-- paste to launch (the URL inside their loadstring(game:HttpGet("..."))() ).
+local LoaderUrl = 'https://api.jnkie.com/api/v1/luascripts/public/3988aa9aa33242afafc777ea35b6a4a2bb02dd4671604fd05dc8580993524b71/download'
+
+-- Retained so the settings paths below keep resolving; nothing writes source here.
 local LocalScriptPath = StorageRoot .. '/ZkxHub_Source_Runnable.lua'
 
 local AutoShowPath = StorageRoot .. '/AutoShow.txt'
@@ -14506,11 +14522,39 @@ function module.ensure_auto_show_file()
     return path
 end
 
--- Handed to queue_on_teleport so the script re-runs automatically after a
--- teleport between RIVALS places. Reads the copy you saved locally -- swap in
--- your own loadstring(game:HttpGet("...")) line if you load from a URL.
+-- Handed to queue_on_teleport so the script re-runs automatically after a teleport
+-- between RIVALS places. Replays the JNKIE loader line -- identical to what your
+-- users paste -- so the source is fetched fresh over HTTP each time and never
+-- cached to disk. Whatever key/whitelist your loader enforces still applies here.
 function module.queue_on_teleport_script()
-    return 'loadstring(readfile("' .. LocalScriptPath .. '"))()'
+    -- pcall-guarded so a momentary JNKIE/network hiccup on the next place fails
+    -- quietly instead of throwing a visible error; the user can re-run manually.
+    return 'pcall(function() loadstring(game:HttpGet("' .. LoaderUrl .. '"))() end)'
+end
+
+-- [PATCH] URL-loader mode: there is no on-disk copy to make. Auto Execute replays
+-- the JNKIE loader (see queue_on_teleport_script), so "ensuring a runnable copy"
+-- collapses to confirming a loader URL is configured. Nothing is written to disk,
+-- so the paid source never sits in the workspace as plain text.
+--
+-- As a safety sweep, delete any stale plain-text source cache a previous build may
+-- have written, so an old copy can't linger in the workspace.
+function module.ensure_runnable_copy()
+    if type(isfile) == 'function' and type(delfile) == 'function' then
+        pcall(function()
+            if isfile(LocalScriptPath) then
+                delfile(LocalScriptPath)
+            end
+        end)
+    end
+    if type(LoaderUrl) == 'string' and LoaderUrl ~= '' then
+        return true, 'loader'
+    end
+    return false, 'no loader url'
+end
+
+function module.has_runnable_copy()
+    return type(LoaderUrl) == 'string' and LoaderUrl ~= ''
 end
 
 function module.format_title()
@@ -19137,6 +19181,10 @@ SaveManager:SetLibrary(Library)
 SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
 SaveManager:SetFolder(ScriptPaths.storage_root())
 
+-- [PATCH] Cache a runnable copy of this script into the executor workspace on
+-- execute, so Auto Execute's queued re-read finds it after a teleport.
+pcall(ScriptPaths.ensure_runnable_copy)
+
 ThemeManager:SetLibrary(Library)
 ThemeManager:SetFolder(ScriptPaths.storage_root())
 
@@ -19282,7 +19330,10 @@ end
 -- queue_on_teleport gets no stub above (call sites handle nil), so this local
 -- capture is where absence becomes a safe no-op: the auto-execute-on-teleport
 -- option must never nil-call on executors that lack it.
-local queue_on_teleport = type(queue_on_teleport) == 'function' and queue_on_teleport or function() end
+local queue_on_teleport = (type(queue_on_teleport) == 'function' and queue_on_teleport)
+    or (type(queueonteleport) == 'function' and queueonteleport)
+    or (type(syn) == 'table' and type(syn.queue_on_teleport) == 'function' and syn.queue_on_teleport)
+    or function() end
 local GameId = game.GameId
 
 local GameName = "Unknown"
@@ -34012,6 +34063,7 @@ ErrorReporter.set_game(GameName)
 
             local BuildRivalsEspUi = nil
             local BuildRivalsAimbotUi = nil
+            local BuildRivalsAntihitUi = nil
             local BuildRivalsModsUi = nil
             local BuildRivalsVisualsUi = nil
             local BuildRivalsRagebotUi = nil
@@ -44484,6 +44536,275 @@ ErrorReporter.set_game(GameName)
 
             end
 
+            -- ============ ZkxHub Antihit (Voidspam + Anti-Aim) ============
+            -- Standalone self-defense port of the ZkhHub ragebot primitives:
+            --  * Voidspam - replicated root thrown to the void each server tick,
+            --    visible root restored before the camera samples it (kernel voidCFrame).
+            --  * Anti-Aim - replicated root yaw spun/jittered/flipped; optional
+            --    Server Look Forge reuses the ragebot ViewAngle module if exposed.
+            -- Self-bound loops; nil-safe reads so it idles until its tab is built.
+            -- Wrapped in an IIFE so its ~25 locals get their OWN 200-register proto
+            -- instead of piling onto the already-near-full enclosing builder function.
+            ;(function()
+            local RivalsAntihit = {} do
+                local Players      = game:GetService("Players")
+                local RunServiceAH = game:GetService("RunService")
+                local Workspace    = workspace
+                local LocalPlayer  = Players.LocalPlayer
+
+                local function tog(id)
+                    local t = Toggles[id]
+                    return t ~= nil and t.Value == true
+                end
+                local function opt(id, dflt)
+                    local o = Options[id]
+                    if o == nil or o.Value == nil then return dflt end
+                    return o.Value
+                end
+
+                local function viewAngleModule()
+                    local b = RivalsRuntimeBridge
+                    if b == nil then return nil end
+                    local va = b.ViewAngle or b.RageViewAngle or b.AntiAim
+                    if va and (va.forge or va.Forge) then return va end
+                    return nil
+                end
+
+                local VOID_MIN, VOID_MAX = 110000, 140000
+                local _voidCF = nil
+                local function voidAxis()
+                    local v = math.random(VOID_MIN, VOID_MAX)
+                    return (math.random(0, 1) == 0) and -v or v
+                end
+                local function rollVoid()
+                    return CFrame.new(voidAxis(), math.random(VOID_MIN, VOID_MAX), voidAxis())
+                end
+                local function nextVoidCF(minStep)
+                    local prev = _voidCF
+                    local cf, tries = rollVoid(), 0
+                    while prev and tries < 8 and (cf.Position - prev.Position).Magnitude < minStep do
+                        cf = rollVoid()
+                        tries = tries + 1
+                    end
+                    _voidCF = cf
+                    return cf
+                end
+
+                local _realCF    = nil
+                local _realChar  = nil
+                local _displaced = false
+                local _spinYaw   = 0
+                local _forgeNext = 0
+
+                local function isSane(p)
+                    return p == p
+                        and math.abs(p.X) < 1e9 and math.abs(p.Y) < 1e9 and math.abs(p.Z) < 1e9
+                end
+                local function getRoot()
+                    local ch = LocalPlayer.Character
+                    if not ch then return nil, nil end
+                    local hrp = ch:FindFirstChild("HumanoidRootPart")
+                    if not hrp or not hrp.Parent then return nil, ch end
+                    return hrp, ch
+                end
+                local function isAlive()
+                    local ch = LocalPlayer.Character
+                    local hu = ch and ch:FindFirstChildOfClass("Humanoid")
+                    return hu ~= nil and hu.Health > 0
+                end
+                local function anyEnabled()
+                    return tog("P11S1T1") or tog("P11S2T1")
+                end
+
+                local function resolveYaw(dt)
+                    local mode = opt("P11S2D1", "Spin")
+                    if mode == "Spin" then
+                        _spinYaw = (_spinYaw + math.rad(opt("P11S2S1", 720)) * (dt or 0)) % (math.pi * 2)
+                        return _spinYaw
+                    elseif mode == "Jitter" then
+                        local deg = opt("P11S2S2", 160)
+                        return math.rad((math.random(0, 1) == 0) and -deg or deg)
+                    elseif mode == "Backwards" then
+                        local cam = Workspace.CurrentCamera
+                        if not cam then return math.pi end
+                        local lv = cam.CFrame.LookVector
+                        return math.atan2(-lv.X, -lv.Z) + math.pi
+                    end
+                    return math.rad(math.random(0, 359))
+                end
+
+                function RivalsAntihit.Replicate(dt)
+                    -- The ZkhHub ragebot (P8S4T1) fully owns HumanoidRootPart while enabled:
+                    -- it parks you in the void and teleports you onto the target to fire. Antihit
+                    -- writes HRP on the SAME Heartbeat, so running both fights for the root every
+                    -- frame. Yield to the ragebot (it already does the void + view-angle forge);
+                    -- Antihit drives only when the ragebot is off (standalone voidspam / anti-aim).
+                    if (not anyEnabled()) or tog("P8S4T1") then
+                        if _displaced then
+                            RivalsAntihit.RestoreVisible()
+                            _displaced = false
+                        end
+                        return
+                    end
+                    local hrp, ch = getRoot()
+                    if not hrp then return end
+                    if not isAlive() then return end
+                    if (not _displaced) and isSane(hrp.Position) then
+                        _realCF, _realChar = hrp.CFrame, ch
+                    elseif _realChar ~= ch and isSane(hrp.Position) then
+                        _realCF, _realChar = hrp.CFrame, ch
+                    end
+                    local base = _realCF or hrp.CFrame
+                    local pos  = base.Position
+                    local rot  = base - base.Position
+                    if tog("P11S1T1") then
+                        pos = nextVoidCF(opt("P11S1S1", 25000)).Position
+                    end
+                    if tog("P11S2T1") then
+                        rot = CFrame.Angles(0, resolveYaw(dt), 0)
+                    end
+                    pcall(function() hrp.CFrame = CFrame.new(pos) * rot end)
+                    _displaced = true
+                    if tog("P11S2T1") and tog("P11S2T2") then
+                        local now = os.clock()
+                        if now >= _forgeNext then
+                            _forgeNext = now + 0.05
+                            local va = viewAngleModule()
+                            if va then
+                                local forge = va.forge or va.Forge
+                                pcall(forge, math.rad(opt("P11S2S3", 0)), resolveYaw(dt))
+                            end
+                        end
+                    else
+                        local va = viewAngleModule()
+                        if va and (va.isForging and va.isForging()) then
+                            pcall(va.restore or va.Restore)
+                        end
+                    end
+                end
+
+                function RivalsAntihit.RestoreVisible()
+                    if not _displaced then return end
+                    local hrp = getRoot()
+                    if not hrp then _displaced = false; return end
+                    local real = _realCF
+                    if real and isSane(real.Position) then
+                        local before = hrp.Position
+                        pcall(function() hrp.CFrame = real end)
+                        if tog("P11S1T2") then
+                            local cam = Workspace.CurrentCamera
+                            if cam then
+                                local delta = real.Position - before
+                                if isSane(delta) then
+                                    pcall(function() cam.CFrame = cam.CFrame + delta end)
+                                end
+                            end
+                        end
+                    end
+                    _displaced = false
+                end
+
+                function RivalsAntihit.Panic()
+                    local hrp = getRoot()
+                    if hrp and _realCF then pcall(function() hrp.CFrame = _realCF end) end
+                    _displaced = false
+                    local va = viewAngleModule()
+                    if va then pcall(va.restore or va.Restore) end
+                end
+
+                LocalPlayer.CharacterAdded:Connect(function()
+                    _displaced, _realCF, _realChar, _voidCF = false, nil, nil, nil
+                end)
+
+                function RivalsAntihit.Start()
+                    if RivalsAntihit._started then return end
+                    RivalsAntihit._started = true
+                    RunServiceAH:BindToRenderStep("ZkxAntihit_Restore", Enum.RenderPriority.First.Value - 1, function()
+                        local ok, err = pcall(RivalsAntihit.RestoreVisible)
+                        if not ok then warn("[Antihit] restore:", err) end
+                    end)
+                    RivalsAntihit._hb = RunServiceAH.Heartbeat:Connect(function(dt)
+                        local ok, err = pcall(RivalsAntihit.Replicate, dt)
+                        if not ok then warn("[Antihit] replicate:", err) end
+                    end)
+                end
+                function RivalsAntihit.Stop()
+                    RivalsAntihit._started = false
+                    pcall(function() RunServiceAH:UnbindFromRenderStep("ZkxAntihit_Restore") end)
+                    if RivalsAntihit._hb then RivalsAntihit._hb:Disconnect(); RivalsAntihit._hb = nil end
+                    RivalsAntihit.Panic()
+                end
+            end
+
+            BuildRivalsAntihitUi = function(Window)
+                local AH = Window:AddTab("Antihit", "shield")
+
+                local G1 = AH:AddLeftGroupbox("Voidspam")
+                local voidToggle = G1:AddToggle("P11S1T1", {
+                    Text    = "Enabled",
+                    Default = false,
+                    Tooltip = "Throws your REPLICATED root far into the void every server tick and restores your visible position each frame. Incoming shots resolve against the void copy and miss. Loud + bannable - dodge tool, not always-on.",
+                    Callback = function(v) if not v then RivalsAntihit.Panic() end end,
+                })
+                voidToggle:AddKeyPicker("P11S1T1K", {
+                    Default = "Unknown", Mode = "Toggle", Text = "Voidspam", NoUI = false,
+                })
+                G1:AddSlider("P11S1S1", {
+                    Text = "Min Jump", Default = 25000, Min = 2000, Max = 120000,
+                    Rounding = 0, Suffix = " studs", Compact = true,
+                    Tooltip = "Minimum distance between consecutive void teleports.",
+                })
+                G1:AddToggle("P11S1T2", {
+                    Text = "Camera Anchor",
+                    Default = false,
+                    Tooltip = "Extra safety: corrects the camera by the restore delta. Usually not needed - restore already runs before the camera updates.",
+                })
+
+                local G2 = AH:AddRightGroupbox("Anti-Aim")
+                local aaToggle = G2:AddToggle("P11S2T1", {
+                    Text    = "Enabled",
+                    Default = false,
+                    Tooltip = "Spoofs the yaw your root replicates with so human aim, peek logic and animation aim-assists resolve the wrong facing.",
+                    Callback = function(v) if not v then RivalsAntihit.Panic() end end,
+                })
+                aaToggle:AddKeyPicker("P11S2T1K", {
+                    Default = "Unknown", Mode = "Toggle", Text = "Anti-Aim", NoUI = false,
+                })
+                G2:AddDropdown("P11S2D1", {
+                    Values  = { "Spin", "Jitter", "Backwards", "Random" },
+                    Default = "Spin", Multi = false, Text = "Mode",
+                    Tooltip = "Spin: continuous yaw. Jitter: snap +/-. Backwards: face away from camera. Random: fresh yaw each tick.",
+                })
+                local DepSpin = G2:AddDependencyBox()
+                DepSpin:AddSlider("P11S2S1", {
+                    Text = "Spin Speed", Default = 720, Min = 90, Max = 2000,
+                    Rounding = 0, Suffix = " deg/s", Compact = true,
+                })
+                DepSpin:SetupDependencies({ { Options.P11S2D1, "Spin" } })
+                local DepJit = G2:AddDependencyBox()
+                DepJit:AddSlider("P11S2S2", {
+                    Text = "Jitter Angle", Default = 160, Min = 10, Max = 180,
+                    Rounding = 0, Suffix = " deg", Compact = true,
+                })
+                DepJit:SetupDependencies({ { Options.P11S2D1, "Jitter" } })
+                G2:AddToggle("P11S2T2", {
+                    Text    = "Server Look Forge",
+                    Default = false,
+                    Tooltip = "Also forges the replicated CameraRotationRaw through the ragebot ViewAngle module (if this build exposes it). Silent no-op when unavailable.",
+                })
+                local DepPitch = G2:AddDependencyBox()
+                DepPitch:AddSlider("P11S2S3", {
+                    Text = "Fake Pitch", Default = 0, Min = -89, Max = 89,
+                    Rounding = 0, Suffix = " deg", Compact = true,
+                })
+                DepPitch:SetupDependencies({ { Toggles.P11S2T2, true } })
+
+                return AH
+            end
+
+            RivalsAntihit.Start()
+            end)()
+
             BuildRivalsAimbotUi = function(Window)
             local P2 = Window:AddTab('Combat', 'crosshair')
 
@@ -47278,6 +47599,7 @@ ErrorReporter.set_game(GameName)
                 BuildRivalsEspUi(Window)
                 local CombatTab = BuildRivalsAimbotUi(Window)
                 BuildRivalsModsUi(CombatTab)
+                BuildRivalsAntihitUi(Window)
                 local AutomationTab = BuildRivalsPickupUi(Window)
                 BuildRivalsRagebotUi(AutomationTab)
                 BuildRivalsVisualsUi(Window)
@@ -48186,6 +48508,73 @@ ErrorReporter.set_game(GameName)
                 RivalsRuntimeBridge.QueueAutoLoadoutSubmission()
 
                 SharedUI:notify_loaded(5)
+
+                -- [PATCH] Auto Execute diagnostic: if the feature is ON but the
+                -- executor can't support it, say why (once) instead of silently
+                -- doing nothing. Stays quiet when everything is ready.
+                task.defer(GuardRivalsCallback('AutoExec_Diagnostic', function()
+                    local autoExecOn = false
+                    pcall(function() autoExecOn = (Toggles.P3S1T4 and Toggles.P3S1T4.Value) == true end)
+                    if not autoExecOn then return end
+                    local hasQueue = false
+                    pcall(function() hasQueue = __ZkhHub_genv.ZkxHubCaps.has('queue_on_teleport') == true end)
+                    local hasCopy = false
+                    pcall(function() hasCopy = ScriptPaths.has_runnable_copy() == true end)
+                    if hasQueue and hasCopy then
+                        pcall(function()
+                            Library:Notify({ Title = 'Auto Execute armed', Description = 'Queue API + JNKIE loader OK - the script re-fetches and re-runs when you teleport/join a new server.', Time = 6 })
+                        end)
+                        return
+                    end
+                    local why = (not hasQueue)
+                        and 'Your executor has no queue-on-teleport API, so Auto Execute cannot re-run the script after a teleport.'
+                        or 'Queue API works, but no loader URL is configured, so Auto Execute has nothing to re-run.'
+                    pcall(function()
+                        Library:Notify({ Title = 'Auto Execute unavailable', Description = why, Time = 10 })
+                    end)
+                end))
+
+                -- [PATCH] Deterministic Auto Load Config.
+                -- prepare_setup's autoload applies config values via task.defer and never
+                -- calls ReconcileLoadedState; the bootstrap RefreshAll above also ran against
+                -- default values before those deferred loads landed. So a saved config could
+                -- end up loaded-but-not-applied ("all defaults"). This runs ONCE after the
+                -- bootstrap settles + the deferred element loads flush, re-loads the resolved
+                -- config, then reconciles feature effects. Additive, guarded, respects the toggle.
+                task.defer(GuardRivalsCallback('AutoLoadConfig_Deterministic', function()
+                    task.wait() -- let prepare_setup's deferred element loads flush first
+                    if not (SharedUI and type(SharedUI.should_auto_load_config) == 'function') then
+                        return
+                    end
+                    local okDecide, wants = pcall(function() return SharedUI:should_auto_load_config() end)
+                    if not okDecide or not wants then
+                        return -- Auto Load Config is off (or nothing resolved); leave defaults as-is
+                    end
+                    local configName
+                    pcall(function() configName = SharedUI:resolve_load_config_name() end)
+                    if type(configName) ~= 'string' or configName == '' then
+                        Library:Notify({ Title = 'Auto Load', Description = 'Auto Load is ON but no config is selected.', Time = 5 })
+                        return
+                    end
+                    local ok, err
+                    if type(SharedUI.with_config_load_suspended) == 'function' then
+                        ok, err = SharedUI:with_config_load_suspended(function()
+                            return SaveManager:Load(configName)
+                        end)
+                    else
+                        ok, err = SaveManager:Load(configName)
+                    end
+                    if ok then
+                        -- SaveManager:Load queued its Parser.Load defers above; this defer runs
+                        -- after them, so effects reconcile against the freshly-loaded values.
+                        if type(ReconcileLoadedState) == 'function' then
+                            task.defer(function() pcall(ReconcileLoadedState) end)
+                        end
+                        Library:Notify({ Title = 'Auto Load', Description = string.format('Loaded config %q on join.', configName), Time = 4 })
+                    else
+                        Library:Notify({ Title = 'Auto Load', Description = string.format('Auto Load could not load %q: %s', configName, tostring(err)), Time = 7 })
+                    end
+                end))
             end
 
             if GuardRivalsCallback('EnumLibrary_StartupBarrier', function()
