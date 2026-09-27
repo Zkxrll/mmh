@@ -1,0 +1,11 @@
+carve_loop        3.00s  RMS  -16.7 dBFS  loop, seam jump 0.0125
+wind_loop         6.00s  RMS  -13.8 dBFS  loop, seam jump 0.0028
+grind_loop        2.00s  RMS  -14.2 dBFS  loop, seam jump 0.1060
+campfire_loop     6.00s  RMS  -26.8 dBFS  loop, seam jump 0.0001
+land_thump        0.70s  RMS  -19.1 dBFS  one-shot
+jump_pop          0.45s  RMS  -22.3 dBFS  one-shot
+trick_whoosh      0.75s  RMS  -17.2 dBFS  one-shot
+trick_success     1.30s  RMS  -15.9 dBFS  one-shot
+powder_burst      0.60s  RMS  -20.1 dBFS  one-shot
+equip_click       0.60s  RMS  -28.4 dBFS  one-shot
+ui_select         0.18s  RMS   -9.4 dBFS  one-shot

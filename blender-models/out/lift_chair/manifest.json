@@ -1,0 +1,21 @@
+{
+  "name": "lift_chair",
+  "size_studs": [
+    3.76,
+    7.11,
+    2.341
+  ],
+  "triangles": 1060,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "lift_chair_Chair": {
+      "triangles": 700,
+      "texture": "palette.png"
+    },
+    "lift_chair_SafetyBar": {
+      "triangles": 360,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "bench",
+  "size_studs": [
+    6.0,
+    3.318,
+    2.049
+  ],
+  "triangles": 656,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "bench": {
+      "triangles": 656,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+Model: rock_flat
+Size (studs): X 14.33  Y(depth) 10.07  Z(height) 3.88
+  -> in Roblox (Y is up): 14.33 x 3.88 x 10.07
+Colors in palette: 4
+  mesh 'rock_flat': 320 triangles
+Total triangles: 320
+Files:
+  palette.png
+  rock_flat.fbx
+  rock_flat.obj
+  rock_flat.glb
+  rock_flat.blend
+  preview_front.jpg
+  preview_back.jpg

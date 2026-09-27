@@ -1,0 +1,30 @@
+{
+  "name": "gate_start",
+  "size_studs": [
+    27.5,
+    18.2,
+    2.2
+  ],
+  "triangles": 404,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Park",
+  "parts": {
+    "gate_start_Main": {
+      "triangles": 320,
+      "texture": "palette.png"
+    },
+    "gate_start_Neon_glow_cyan": {
+      "triangles": 72,
+      "material": "Neon",
+      "color": [
+        60,
+        240,
+        255
+      ]
+    },
+    "gate_start_gate_start_banner": {
+      "triangles": 12,
+      "texture": "gate_start_banner.png"
+    }
+  }
+}

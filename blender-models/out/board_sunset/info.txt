@@ -1,0 +1,18 @@
+Model: board_sunset
+Size (studs): X 1.30  Y(depth) 4.84  Z(height) 0.75
+  -> in Roblox (Y is up): 1.30 x 0.75 x 4.84
+Colors in palette: 3
+  mesh 'board_sunset_Deck': 3500 triangles
+  mesh 'board_sunset_Bindings': 1016 triangles
+  mesh 'board_sunset_Glow': 1168 triangles
+Total triangles: 5684
+Special parts (applied by the Roblox setup script):
+  board_sunset_Glow: Material Neon, Color hot_pink
+Files:
+  palette.png
+  board_sunset.fbx
+  board_sunset.obj
+  board_sunset.glb
+  board_sunset.blend
+  preview_front.jpg
+  preview_back.jpg

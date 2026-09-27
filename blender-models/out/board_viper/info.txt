@@ -1,0 +1,18 @@
+Model: board_viper
+Size (studs): X 1.30  Y(depth) 4.84  Z(height) 0.75
+  -> in Roblox (Y is up): 1.30 x 0.75 x 4.84
+Colors in palette: 4
+  mesh 'board_viper_Deck': 3500 triangles
+  mesh 'board_viper_Bindings': 1016 triangles
+  mesh 'board_viper_Glow': 1168 triangles
+Total triangles: 5684
+Special parts (applied by the Roblox setup script):
+  board_viper_Glow: Material Neon, Color neon_green
+Files:
+  palette.png
+  board_viper.fbx
+  board_viper.obj
+  board_viper.glb
+  board_viper.blend
+  preview_front.jpg
+  preview_back.jpg

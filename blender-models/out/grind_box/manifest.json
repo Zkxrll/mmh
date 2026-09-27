@@ -1,0 +1,17 @@
+{
+  "name": "grind_box",
+  "size_studs": [
+    22.4,
+    1.72,
+    2.04
+  ],
+  "triangles": 204,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Park",
+  "parts": {
+    "grind_box": {
+      "triangles": 204,
+      "texture": "palette.png"
+    }
+  }
+}

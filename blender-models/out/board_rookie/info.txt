@@ -1,0 +1,15 @@
+Model: board_rookie
+Size (studs): X 1.26  Y(depth) 4.80  Z(height) 0.75
+  -> in Roblox (Y is up): 1.26 x 0.75 x 4.80
+Colors in palette: 4
+  mesh 'board_rookie_Deck': 3500 triangles
+  mesh 'board_rookie_Bindings': 1016 triangles
+Total triangles: 4516
+Files:
+  palette.png
+  board_rookie.fbx
+  board_rookie.obj
+  board_rookie.glb
+  board_rookie.blend
+  preview_front.jpg
+  preview_back.jpg

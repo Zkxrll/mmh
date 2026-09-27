@@ -1,0 +1,17 @@
+{
+  "name": "mountain_peak",
+  "size_studs": [
+    600.0,
+    298.991,
+    600.0
+  ],
+  "triangles": 17278,
+  "collision": "Default",
+  "category": "Mountains",
+  "parts": {
+    "mountain_peak": {
+      "triangles": 17278,
+      "texture": "palette.png"
+    }
+  }
+}

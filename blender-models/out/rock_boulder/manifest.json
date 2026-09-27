@@ -1,0 +1,17 @@
+{
+  "name": "rock_boulder",
+  "size_studs": [
+    9.964,
+    7.856,
+    8.807
+  ],
+  "triangles": 320,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "rock_boulder": {
+      "triangles": 320,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+Model: snowman
+Size (studs): X 6.12  Y(depth) 3.60  Z(height) 7.86
+  -> in Roblox (Y is up): 6.12 x 7.86 x 3.60
+Colors in palette: 5
+  mesh 'snowman': 1710 triangles
+Total triangles: 1710
+Files:
+  palette.png
+  snowman.fbx
+  snowman.obj
+  snowman.glb
+  snowman.blend
+  preview_front.jpg
+  preview_back.jpg

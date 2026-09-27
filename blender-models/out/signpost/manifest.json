@@ -1,0 +1,21 @@
+{
+  "name": "signpost",
+  "size_studs": [
+    9.117,
+    9.45,
+    2.414
+  ],
+  "triangles": 126,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "signpost_Main": {
+      "triangles": 78,
+      "texture": "palette.png"
+    },
+    "signpost_Signs": {
+      "triangles": 48,
+      "texture": "signpost_arrows.png"
+    }
+  }
+}

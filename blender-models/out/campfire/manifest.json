@@ -1,0 +1,44 @@
+{
+  "name": "campfire",
+  "size_studs": [
+    4.923,
+    2.221,
+    4.825
+  ],
+  "triangles": 854,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "campfire_Main": {
+      "triangles": 816,
+      "texture": "palette.png"
+    },
+    "campfire_Neon_fire": {
+      "triangles": 10,
+      "material": "Neon",
+      "color": [
+        255,
+        140,
+        40
+      ]
+    },
+    "campfire_Neon_flame_yellow": {
+      "triangles": 8,
+      "material": "Neon",
+      "color": [
+        255,
+        210,
+        60
+      ]
+    },
+    "campfire_Neon_ember": {
+      "triangles": 20,
+      "material": "Neon",
+      "color": [
+        255,
+        90,
+        30
+      ]
+    }
+  }
+}

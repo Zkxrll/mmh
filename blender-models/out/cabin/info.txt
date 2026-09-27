@@ -1,0 +1,19 @@
+Model: cabin
+Size (studs): X 21.29  Y(depth) 24.53  Z(height) 19.31
+  -> in Roblox (Y is up): 21.29 x 19.31 x 24.53
+Colors in palette: 15
+  mesh 'cabin_Structure': 5614 triangles
+  mesh 'cabin_Icicles': 256 triangles
+  mesh 'cabin_Windows': 96 triangles
+Total triangles: 5966
+Special parts (applied by the Roblox setup script):
+  cabin_Icicles: Material Glass, Color ice
+  cabin_Windows: Material Neon, Color window_glow
+Files:
+  palette.png
+  cabin.fbx
+  cabin.obj
+  cabin.glb
+  cabin.blend
+  preview_front.jpg
+  preview_back.jpg

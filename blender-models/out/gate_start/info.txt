@@ -1,0 +1,18 @@
+Model: gate_start
+Size (studs): X 27.50  Y(depth) 2.20  Z(height) 18.20
+  -> in Roblox (Y is up): 27.50 x 18.20 x 2.20
+Colors in palette: 7
+  mesh 'gate_start_Main': 320 triangles
+  mesh 'gate_start_Neon_glow_cyan': 72 triangles
+  mesh 'gate_start_gate_start_banner': 12 triangles
+Total triangles: 404
+Special parts (applied by the Roblox setup script):
+  gate_start_Neon_glow_cyan: Material Neon, Color glow_cyan
+Files:
+  palette.png
+  gate_start.fbx
+  gate_start.obj
+  gate_start.glb
+  gate_start.blend
+  preview_front.jpg
+  preview_back.jpg

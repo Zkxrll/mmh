@@ -1,0 +1,17 @@
+{
+  "name": "pine_leaning",
+  "size_studs": [
+    7.439,
+    12.771,
+    7.367
+  ],
+  "triangles": 280,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "pine_leaning": {
+      "triangles": 280,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+Model: rail_kink
+Size (studs): X 24.56  Y(depth) 1.40  Z(height) 5.29
+  -> in Roblox (Y is up): 24.56 x 5.29 x 1.40
+Colors in palette: 3
+  mesh 'rail_kink': 820 triangles
+Total triangles: 820
+Files:
+  palette.png
+  rail_kink.fbx
+  rail_kink.obj
+  rail_kink.glb
+  rail_kink.blend
+  preview_front.jpg
+  preview_back.jpg

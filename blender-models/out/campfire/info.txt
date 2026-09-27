@@ -1,0 +1,21 @@
+Model: campfire
+Size (studs): X 4.92  Y(depth) 4.83  Z(height) 2.22
+  -> in Roblox (Y is up): 4.92 x 2.22 x 4.83
+Colors in palette: 9
+  mesh 'campfire_Main': 816 triangles
+  mesh 'campfire_Neon_fire': 10 triangles
+  mesh 'campfire_Neon_flame_yellow': 8 triangles
+  mesh 'campfire_Neon_ember': 20 triangles
+Total triangles: 854
+Special parts (applied by the Roblox setup script):
+  campfire_Neon_fire: Material Neon, Color fire
+  campfire_Neon_flame_yellow: Material Neon, Color flame_yellow
+  campfire_Neon_ember: Material Neon, Color ember
+Files:
+  palette.png
+  campfire.fbx
+  campfire.obj
+  campfire.glb
+  campfire.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -1,0 +1,14 @@
+Model: slalom_red
+Size (studs): X 4.64  Y(depth) 0.24  Z(height) 6.60
+  -> in Roblox (Y is up): 4.64 x 6.60 x 0.24
+Colors in palette: 2
+  mesh 'slalom_red': 308 triangles
+Total triangles: 308
+Files:
+  palette.png
+  slalom_red.fbx
+  slalom_red.obj
+  slalom_red.glb
+  slalom_red.blend
+  preview_front.jpg
+  preview_back.jpg

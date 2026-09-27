@@ -1,0 +1,30 @@
+{
+  "name": "board_viper",
+  "size_studs": [
+    1.304,
+    0.749,
+    4.844
+  ],
+  "triangles": 5684,
+  "collision": "Default",
+  "category": "Boards",
+  "parts": {
+    "board_viper_Deck": {
+      "triangles": 3500,
+      "texture": "board_viper_deck.png"
+    },
+    "board_viper_Bindings": {
+      "triangles": 1016,
+      "texture": "palette.png"
+    },
+    "board_viper_Glow": {
+      "triangles": 1168,
+      "material": "Neon",
+      "color": [
+        80,
+        255,
+        120
+      ]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "SnowboardServer",
+  "tree": { "$path": "src/server" }
+}

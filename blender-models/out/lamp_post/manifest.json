@@ -1,0 +1,26 @@
+{
+  "name": "lamp_post",
+  "size_studs": [
+    3.167,
+    10.17,
+    1.4
+  ],
+  "triangles": 336,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "lamp_post_Main": {
+      "triangles": 324,
+      "texture": "palette.png"
+    },
+    "lamp_post_Neon_window_glow": {
+      "triangles": 12,
+      "material": "Neon",
+      "color": [
+        255,
+        196,
+        110
+      ]
+    }
+  }
+}

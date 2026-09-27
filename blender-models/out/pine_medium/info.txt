@@ -1,0 +1,14 @@
+Model: pine_medium
+Size (studs): X 7.67  Y(depth) 7.59  Z(height) 13.72
+  -> in Roblox (Y is up): 7.67 x 13.72 x 7.59
+Colors in palette: 4
+  mesh 'pine_medium': 264 triangles
+Total triangles: 264
+Files:
+  palette.png
+  pine_medium.fbx
+  pine_medium.obj
+  pine_medium.glb
+  pine_medium.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -1,0 +1,35 @@
+{
+  "name": "ice_crystals",
+  "size_studs": [
+    6.429,
+    10.995,
+    5.72
+  ],
+  "triangles": 356,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "ice_crystals_Glass_ice": {
+      "triangles": 156,
+      "material": "Glass",
+      "color": [
+        168,
+        214,
+        240
+      ]
+    },
+    "ice_crystals_Neon_glow_cyan": {
+      "triangles": 120,
+      "material": "Neon",
+      "color": [
+        60,
+        240,
+        255
+      ]
+    },
+    "ice_crystals_Main": {
+      "triangles": 80,
+      "texture": "palette.png"
+    }
+  }
+}

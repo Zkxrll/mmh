@@ -1,0 +1,14 @@
+Model: grind_box
+Size (studs): X 22.40  Y(depth) 2.04  Z(height) 1.72
+  -> in Roblox (Y is up): 22.40 x 1.72 x 2.04
+Colors in palette: 4
+  mesh 'grind_box': 204 triangles
+Total triangles: 204
+Files:
+  palette.png
+  grind_box.fbx
+  grind_box.obj
+  grind_box.glb
+  grind_box.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -1,0 +1,18 @@
+Model: board_inferno
+Size (studs): X 1.30  Y(depth) 4.84  Z(height) 0.75
+  -> in Roblox (Y is up): 1.30 x 0.75 x 4.84
+Colors in palette: 4
+  mesh 'board_inferno_Deck': 3500 triangles
+  mesh 'board_inferno_Bindings': 1016 triangles
+  mesh 'board_inferno_Glow': 1168 triangles
+Total triangles: 5684
+Special parts (applied by the Roblox setup script):
+  board_inferno_Glow: Material Neon, Color fire
+Files:
+  palette.png
+  board_inferno.fbx
+  board_inferno.obj
+  board_inferno.glb
+  board_inferno.blend
+  preview_front.jpg
+  preview_back.jpg

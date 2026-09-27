@@ -1,0 +1,14 @@
+Model: rock_boulder
+Size (studs): X 9.96  Y(depth) 8.81  Z(height) 7.86
+  -> in Roblox (Y is up): 9.96 x 7.86 x 8.81
+Colors in palette: 4
+  mesh 'rock_boulder': 320 triangles
+Total triangles: 320
+Files:
+  palette.png
+  rock_boulder.fbx
+  rock_boulder.obj
+  rock_boulder.glb
+  rock_boulder.blend
+  preview_front.jpg
+  preview_back.jpg

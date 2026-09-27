@@ -1,0 +1,17 @@
+{
+  "name": "rock_flat",
+  "size_studs": [
+    14.332,
+    3.882,
+    10.066
+  ],
+  "triangles": 320,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "rock_flat": {
+      "triangles": 320,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+Model: kicker_small
+Size (studs): X 15.75  Y(depth) 9.48  Z(height) 5.20
+  -> in Roblox (Y is up): 15.75 x 5.20 x 9.48
+Colors in palette: 4
+  mesh 'kicker_small': 168 triangles
+Total triangles: 168
+Files:
+  palette.png
+  kicker_small.fbx
+  kicker_small.obj
+  kicker_small.glb
+  kicker_small.blend
+  preview_front.jpg
+  preview_back.jpg

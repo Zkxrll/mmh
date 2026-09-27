@@ -1,0 +1,19 @@
+Model: ice_crystals
+Size (studs): X 6.43  Y(depth) 5.72  Z(height) 11.00
+  -> in Roblox (Y is up): 6.43 x 11.00 x 5.72
+Colors in palette: 4
+  mesh 'ice_crystals_Glass_ice': 156 triangles
+  mesh 'ice_crystals_Neon_glow_cyan': 120 triangles
+  mesh 'ice_crystals_Main': 80 triangles
+Total triangles: 356
+Special parts (applied by the Roblox setup script):
+  ice_crystals_Glass_ice: Material Glass, Color ice
+  ice_crystals_Neon_glow_cyan: Material Neon, Color glow_cyan
+Files:
+  palette.png
+  ice_crystals.fbx
+  ice_crystals.obj
+  ice_crystals.glb
+  ice_crystals.blend
+  preview_front.jpg
+  preview_back.jpg

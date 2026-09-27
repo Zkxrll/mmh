@@ -1,0 +1,17 @@
+{
+  "name": "pine_tall",
+  "size_studs": [
+    9.182,
+    19.361,
+    9.079
+  ],
+  "triangles": 304,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "pine_tall": {
+      "triangles": 304,
+      "texture": "palette.png"
+    }
+  }
+}

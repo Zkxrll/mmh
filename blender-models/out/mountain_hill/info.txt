@@ -1,0 +1,14 @@
+Model: mountain_hill
+Size (studs): X 300.00  Y(depth) 300.00  Z(height) 87.56
+  -> in Roblox (Y is up): 300.00 x 87.56 x 300.00
+Colors in palette: 5
+  mesh 'mountain_hill': 7918 triangles
+Total triangles: 7918
+Files:
+  palette.png
+  mountain_hill.fbx
+  mountain_hill.obj
+  mountain_hill.glb
+  mountain_hill.blend
+  preview_front.jpg
+  preview_back.jpg

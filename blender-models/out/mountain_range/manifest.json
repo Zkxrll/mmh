@@ -1,0 +1,17 @@
+{
+  "name": "mountain_range",
+  "size_studs": [
+    1000.0,
+    236.486,
+    400.0
+  ],
+  "triangles": 15478,
+  "collision": "Default",
+  "category": "Mountains",
+  "parts": {
+    "mountain_range": {
+      "triangles": 15478,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "lodge",
+  "size_studs": [
+    32.073,
+    33.882,
+    39.025
+  ],
+  "triangles": 17686,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Buildings",
+  "parts": {
+    "lodge_Structure": {
+      "triangles": 16858,
+      "texture": "palette.png"
+    },
+    "lodge_Icicles": {
+      "triangles": 528,
+      "material": "Glass",
+      "color": [
+        168,
+        214,
+        240
+      ]
+    },
+    "lodge_Windows": {
+      "triangles": 300,
+      "material": "Neon",
+      "color": [
+        255,
+        196,
+        110
+      ]
+    }
+  }
+}

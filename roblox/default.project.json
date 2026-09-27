@@ -1,0 +1,17 @@
+{
+  "name": "SnowboardGame",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "SnowboardKit": { "$path": "src/shared" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "SnowboardClient": { "$path": "src/client" }
+      }
+    },
+    "ServerScriptService": {
+      "SnowboardServer": { "$path": "src/server" }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+Model: gate_finish
+Size (studs): X 27.50  Y(depth) 2.20  Z(height) 18.20
+  -> in Roblox (Y is up): 27.50 x 18.20 x 2.20
+Colors in palette: 7
+  mesh 'gate_finish_Main': 320 triangles
+  mesh 'gate_finish_Neon_glow_cyan': 72 triangles
+  mesh 'gate_finish_gate_finish_banner': 12 triangles
+Total triangles: 404
+Special parts (applied by the Roblox setup script):
+  gate_finish_Neon_glow_cyan: Material Neon, Color glow_cyan
+Files:
+  palette.png
+  gate_finish.fbx
+  gate_finish.obj
+  gate_finish.glb
+  gate_finish.blend
+  preview_front.jpg
+  preview_back.jpg

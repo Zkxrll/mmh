@@ -1,0 +1,39 @@
+{
+  "name": "board_shop",
+  "size_studs": [
+    23.652,
+    19.579,
+    25.925
+  ],
+  "triangles": 5826,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Buildings",
+  "parts": {
+    "board_shop_Structure": {
+      "triangles": 5482,
+      "texture": "palette.png"
+    },
+    "board_shop_Icicles": {
+      "triangles": 272,
+      "material": "Glass",
+      "color": [
+        168,
+        214,
+        240
+      ]
+    },
+    "board_shop_Windows": {
+      "triangles": 60,
+      "material": "Neon",
+      "color": [
+        255,
+        196,
+        110
+      ]
+    },
+    "board_shop_Sign": {
+      "triangles": 12,
+      "texture": "board_shop_sign.png"
+    }
+  }
+}

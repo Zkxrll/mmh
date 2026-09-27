@@ -10,5 +10,5 @@ Files:
   crate.obj
   crate.glb
   crate.blend
-  preview_front.png
-  preview_back.png
+  preview_front.jpg
+  preview_back.jpg

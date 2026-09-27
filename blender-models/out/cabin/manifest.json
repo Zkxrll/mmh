@@ -1,0 +1,35 @@
+{
+  "name": "cabin",
+  "size_studs": [
+    21.292,
+    19.307,
+    24.525
+  ],
+  "triangles": 5966,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Buildings",
+  "parts": {
+    "cabin_Structure": {
+      "triangles": 5614,
+      "texture": "palette.png"
+    },
+    "cabin_Icicles": {
+      "triangles": 256,
+      "material": "Glass",
+      "color": [
+        168,
+        214,
+        240
+      ]
+    },
+    "cabin_Windows": {
+      "triangles": 96,
+      "material": "Neon",
+      "color": [
+        255,
+        196,
+        110
+      ]
+    }
+  }
+}

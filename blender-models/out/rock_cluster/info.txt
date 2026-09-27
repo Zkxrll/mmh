@@ -1,0 +1,14 @@
+Model: rock_cluster
+Size (studs): X 20.09  Y(depth) 10.25  Z(height) 7.03
+  -> in Roblox (Y is up): 20.09 x 7.03 x 10.25
+Colors in palette: 4
+  mesh 'rock_cluster': 960 triangles
+Total triangles: 960
+Files:
+  palette.png
+  rock_cluster.fbx
+  rock_cluster.obj
+  rock_cluster.glb
+  rock_cluster.blend
+  preview_front.jpg
+  preview_back.jpg

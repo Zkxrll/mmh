@@ -1,0 +1,17 @@
+{
+  "name": "kicker_big",
+  "size_studs": [
+    26.0,
+    6.06,
+    13.48
+  ],
+  "triangles": 168,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Park",
+  "parts": {
+    "kicker_big": {
+      "triangles": 168,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+Model: lift_chair
+Size (studs): X 3.76  Y(depth) 2.34  Z(height) 7.11
+  -> in Roblox (Y is up): 3.76 x 7.11 x 2.34
+Colors in palette: 3
+  mesh 'lift_chair_Chair': 700 triangles
+  mesh 'lift_chair_SafetyBar': 360 triangles
+Total triangles: 1060
+Files:
+  palette.png
+  lift_chair.fbx
+  lift_chair.obj
+  lift_chair.glb
+  lift_chair.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -1,0 +1,26 @@
+{
+  "name": "lift_tower",
+  "size_studs": [
+    18.0,
+    33.45,
+    4.5
+  ],
+  "triangles": 1020,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "lift_tower_Main": {
+      "triangles": 1000,
+      "texture": "palette.png"
+    },
+    "lift_tower_Neon_bright_red": {
+      "triangles": 20,
+      "material": "Neon",
+      "color": [
+        255,
+        60,
+        50
+      ]
+    }
+  }
+}

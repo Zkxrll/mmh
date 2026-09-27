@@ -1,0 +1,15 @@
+Model: signpost
+Size (studs): X 9.12  Y(depth) 2.41  Z(height) 9.45
+  -> in Roblox (Y is up): 9.12 x 9.45 x 2.41
+Colors in palette: 3
+  mesh 'signpost_Main': 78 triangles
+  mesh 'signpost_Signs': 48 triangles
+Total triangles: 126
+Files:
+  palette.png
+  signpost.fbx
+  signpost.obj
+  signpost.glb
+  signpost.blend
+  preview_front.jpg
+  preview_back.jpg

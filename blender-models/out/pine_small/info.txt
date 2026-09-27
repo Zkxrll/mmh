@@ -1,0 +1,14 @@
+Model: pine_small
+Size (studs): X 5.06  Y(depth) 4.90  Z(height) 7.78
+  -> in Roblox (Y is up): 5.06 x 7.78 x 4.90
+Colors in palette: 4
+  mesh 'pine_small': 240 triangles
+Total triangles: 240
+Files:
+  palette.png
+  pine_small.fbx
+  pine_small.obj
+  pine_small.glb
+  pine_small.blend
+  preview_front.jpg
+  preview_back.jpg

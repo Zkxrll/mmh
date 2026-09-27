@@ -1,0 +1,17 @@
+Model: lamp_post
+Size (studs): X 3.17  Y(depth) 1.40  Z(height) 10.17
+  -> in Roblox (Y is up): 3.17 x 10.17 x 1.40
+Colors in palette: 7
+  mesh 'lamp_post_Main': 324 triangles
+  mesh 'lamp_post_Neon_window_glow': 12 triangles
+Total triangles: 336
+Special parts (applied by the Roblox setup script):
+  lamp_post_Neon_window_glow: Material Neon, Color window_glow
+Files:
+  palette.png
+  lamp_post.fbx
+  lamp_post.obj
+  lamp_post.glb
+  lamp_post.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -4,10 +4,14 @@ rbx.py - small helper library for building Roblox-ready models with Blender (bpy
 Units: 1 Blender unit = 1 Roblox stud. Build models at real stud sizes
 (a Roblox character is ~5 studs tall, a door ~4x7 studs).
 
-Colors: parts are painted with named colors. On export every color is baked
-into one small palette texture (palette.png) and the faces are UV-mapped onto
-their swatch, so the whole model uses a single texture - the usual low-poly
-workflow, and it works as a MeshPart TextureID / SurfaceAppearance ColorMap.
+Colors: parts are painted with named colors. Every model shares ONE palette
+texture (palette.png, all COLORS in a fixed order) and faces are UV-mapped onto
+their swatch - upload palette.png once and it works for every MeshPart.
+
+Special parts: glow(obj, color) marks a part as Neon. It is exported as its own
+mesh and listed in manifest.json, which the Roblox setup script reads to set
+Material / Color. group(obj, "Door") keeps parts together as one MeshPart when
+the model is exported with JOIN = False.
 """
 
 import math
@@ -50,9 +54,39 @@ COLORS = {
     "metal": (150, 155, 165),
     "dark_metal": (70, 75, 85),
     "glow_cyan": (60, 240, 255),
+    # winter
+    "snow": (236, 242, 250),
+    "snow_shadow": (200, 214, 232),
+    "ice": (168, 214, 240),
+    "deep_ice": (90, 160, 210),
+    "rock": (110, 112, 120),
+    "dark_rock": (72, 72, 82),
+    "light_rock": (150, 150, 158),
+    "pine": (38, 84, 62),
+    "dark_pine": (26, 60, 46),
+    "bark": (92, 64, 48),
+    "timber": (120, 78, 50),
+    "dark_timber": (78, 50, 34),
+    "plaster": (232, 224, 208),
+    "roof": (70, 52, 48),
+    "window_glow": (255, 196, 110),
+    "fire": (255, 140, 40),
+    "ember": (255, 90, 30),
+    "hot_pink": (255, 40, 140),
+    "magenta": (190, 40, 220),
+    "violet": (80, 40, 160),
+    "navy": (20, 30, 70),
+    "cyan": (40, 200, 240),
+    "neon_green": (80, 255, 120),
+    "flame_yellow": (255, 210, 60),
+    "carbon": (35, 36, 42),
+    "rubber": (45, 45, 50),
+    "safety_orange": (255, 110, 20),
+    "banner_blue": (30, 90, 200),
 }
+PALETTE_ORDER = list(COLORS)  # fixed order -> identical palette.png for every model
 
-_palette = []  # ordered list of color names used in the current model
+_palette = []  # color names used in the current model (for the report)
 
 
 # ---------------------------------------------------------------- scene ----
@@ -111,6 +145,7 @@ def paint_faces(obj, col, where):
     if mat.name not in [m.name for m in mats if m]:
         mats.append(mat)
     idx = [m.name for m in mats].index(mat.name)
+    bpy.context.view_layer.update()  # refresh matrix_world after location / rotation changes
     mw = obj.matrix_world
     for p in obj.data.polygons:
         c = mw @ p.center
@@ -188,6 +223,25 @@ def torus(major=1, minor=0.25, loc=(0, 0, 0), rot=None, col="stone", name=None, 
     return _finish(bpy.context.active_object, name, col, loc, rot)
 
 
+def tube(points, radius=0.25, col="metal", sides=12, name="tube", joints=True):
+    """Round bar through a list of points - rails, pipes, handles, frames."""
+    from mathutils import Quaternion
+    parts = []
+    pts = [Vector(p) for p in points]
+    for a, b in zip(pts, pts[1:]):
+        d = b - a
+        c = cylinder(radius=radius, depth=d.length, loc=(a + b) / 2, col=col, sides=sides)
+        c.rotation_mode = "QUATERNION"
+        c.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(d.normalized())
+        parts.append(c)
+    if joints:
+        for p in pts[1:-1]:
+            parts.append(uv_sphere(radius=radius, loc=p, col=col, segments=sides, rings=max(4, sides // 2),
+                                   smooth=False))
+    obj = join(parts, name) if len(parts) > 1 else parts[0]
+    return obj
+
+
 def mesh_from_data(verts, faces, loc=(0, 0, 0), rot=None, col="stone", name="mesh"):
     """Build a mesh from raw vertex / face lists (full control over the shape)."""
     me = bpy.data.meshes.new(name)
@@ -236,6 +290,90 @@ def lathe(profile, loc=(0, 0, 0), rot=None, col="stone", name="lathe", sides=16)
         bmesh.ops.holes_fill(bm, edges=edges, sides=0)
     bm.to_mesh(obj.data)
     bm.free()
+    recalc_normals(obj)
+    return obj
+
+
+def glow(obj, col="window_glow", material="Neon"):
+    """Mark a part as glowing (Roblox Neon). Exported as its own MeshPart."""
+    paint(obj, col)
+    obj["rbx_material"] = material
+    obj["rbx_color"] = color(col)
+    return obj
+
+
+def textured(obj, image_path, uv_fn, roughness=0.45):
+    """Give a part its own image texture instead of the palette.
+    uv_fn(co, normal) -> (u, v) is called for every face corner (world space).
+    The part is exported as its own MeshPart with the image embedded."""
+    img = bpy.data.images.load(os.path.abspath(image_path), check_existing=True)
+    mat = bpy.data.materials.new("tex_" + os.path.basename(image_path))
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = roughness
+    me = obj.data
+    me.materials.clear()
+    me.materials.append(mat)
+    uv = me.uv_layers[0] if me.uv_layers else me.uv_layers.new(name="UVMap")
+    uv.name = "UVMap"
+    bpy.context.view_layer.update()  # refresh matrix_world after location / rotation changes
+    mw = obj.matrix_world
+    rot = mw.to_3x3()
+    for p in me.polygons:
+        p.material_index = 0
+        n = (rot @ p.normal).normalized()
+        for li in p.loop_indices:
+            co = mw @ me.vertices[me.loops[li].vertex_index].co
+            uv.data[li].uv = uv_fn(co, n)
+    obj["rbx_texture"] = os.path.abspath(image_path)
+    return obj
+
+
+def group(obj, name):
+    """Keep objects with the same group name together as one MeshPart (JOIN = False)."""
+    obj["rbx_group"] = name
+    return obj
+
+
+def heightfield(size=(100, 100), res=(60, 60), height=None, loc=(0, 0, 0), name="terrain",
+                base=0.0):
+    """Grid mesh whose vertex heights come from height(x, y) -> z (studs).
+    The grid is closed with side skirts and a bottom so it is a solid mesh.
+    Paint it afterwards with paint_faces (e.g. snow on flat tops, rock on cliffs)."""
+    sx, sy = size
+    nx, ny = res
+    verts, faces = [], []
+    for j in range(ny + 1):
+        for i in range(nx + 1):
+            x = (i / nx - 0.5) * sx
+            y = (j / ny - 0.5) * sy
+            verts.append((x, y, max(base, height(x, y)) if height else 0.0))
+    idx = lambda i, j: j * (nx + 1) + i
+    for j in range(ny):
+        for i in range(nx):
+            # alternate the diagonal for a nicer low-poly look
+            a, b, c, d = idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)
+            if (i + j) % 2:
+                faces += [[a, b, c], [a, c, d]]
+            else:
+                faces += [[a, b, d], [b, c, d]]
+    # skirt: ring of boundary vertices dropped to the base
+    ring = ([idx(i, 0) for i in range(nx)] + [idx(nx, j) for j in range(ny)] +
+            [idx(i, ny) for i in range(nx, 0, -1)] + [idx(0, j) for j in range(ny, 0, -1)])
+    start = len(verts)
+    for k in ring:
+        x, y, _ = verts[k]
+        verts.append((x, y, base))
+    n = len(ring)
+    for m in range(n):
+        a, b = ring[m], ring[(m + 1) % n]
+        faces.append([b, a, start + m, start + (m + 1) % n])
+    faces.append([start + m for m in range(n)])
+    obj = mesh_from_data(verts, faces, loc=loc, col="rock", name=name)
     recalc_normals(obj)
     return obj
 
@@ -449,7 +587,7 @@ SWATCH = 16  # pixels per swatch
 
 def _bake_palette(outdir):
     """Make palette.png, UV every face onto its color swatch, swap to one material."""
-    keys = list(_palette) or ["stone"]
+    keys = list(COLORS)  # global palette (custom colors get appended at the end)
     cols = 8
     rows = max(1, math.ceil(len(keys) / cols))
     w, h = cols * SWATCH, rows * SWATCH
@@ -483,6 +621,8 @@ def _bake_palette(outdir):
     # tiny square inside the swatch so filtering never bleeds into neighbours
     du, dv = 0.2 / cols, 0.2 / rows
     for obj in mesh_objects():
+        if obj.get("rbx_texture"):
+            continue
         me = obj.data
         names = [m.name[4:] if m and m.name.startswith("col_") else "stone" for m in me.materials] or ["stone"]
         uv = me.uv_layers.new(name="UVMap") if not me.uv_layers else me.uv_layers[0]
@@ -507,11 +647,20 @@ def _bounds(objs):
     return lo, hi
 
 
+def _triangulate(obj):
+    """Triangulate here (handles concave n-gons correctly) so importers never guess."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY", ngon_method="BEAUTY")
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
 def _tri_count(obj):
     return sum(len(p.vertices) - 2 for p in obj.data.polygons)
 
 
-def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb")):
+def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb"), meta=None):
     """Finish the model and write Roblox-ready files into outdir.
 
     join_all=True  -> one mesh (one MeshPart in Roblox)
@@ -525,11 +674,29 @@ def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb")):
     for o in objs:
         apply_modifiers(o)
         apply_transform(o, location=False)
-    if join_all and len(objs) > 1:
-        join(objs, name)
+
+    # group objects into the meshes that will become MeshParts
+    groups = {}
+    for o in objs:
+        if o.get("rbx_texture"):
+            key = o.get("rbx_group") or os.path.splitext(os.path.basename(o["rbx_texture"]))[0]
+        elif o.get("rbx_material"):
+            key = o.get("rbx_group") or "%s_%s" % (o["rbx_material"], o["rbx_color"])
+        elif join_all:
+            key = "Main"
+        else:
+            key = o.get("rbx_group") or o.name
+        groups.setdefault(key, []).append(o)
+    specials = {}
+    for key, members in groups.items():
+        props = {k: members[0][k] for k in ("rbx_material", "rbx_color", "rbx_texture") if k in members[0]}
+        o = join(members) if len(members) > 1 else members[0]
+        o.name = name if (key == "Main" and len(groups) == 1) else f"{name}_{key}"
+        for k, v in props.items():
+            o[k] = v
+        if props.get("rbx_material"):
+            specials[o.name] = props
     objs = mesh_objects()
-    if len(objs) == 1:
-        objs[0].name = name
 
     # put the model on the ground, centered: pivot at bottom center
     lo, hi = _bounds(objs)
@@ -540,6 +707,8 @@ def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb")):
         apply_transform(o, location=True)
         merge_by_distance(o)
         recalc_normals(o)
+        _triangulate(o)
+        o.data.name = o.name  # importers may use either the object or the mesh name
 
     palette = _bake_palette(outdir)
     lo, hi = _bounds(objs)
@@ -556,6 +725,31 @@ def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb")):
         warn = "  <-- OVER ROBLOX LIMIT, decimate() it or split it" if t > ROBLOX_TRI_LIMIT else ""
         report.append(f"  mesh '{o.name}': {t} triangles{warn}")
     report.append(f"Total triangles: {total}")
+    if specials:
+        report.append("Special parts (applied by the Roblox setup script):")
+        for pn, pr in specials.items():
+            report.append(f"  {pn}: Material {pr['rbx_material']}, Color {pr['rbx_color']}")
+    manifest = {
+        "name": name,
+        "size_studs": [round(size.x, 3), round(size.z, 3), round(size.y, 3)],
+        "triangles": total,
+        **(meta or {}),
+        "parts": {o.name: {"triangles": _tri_count(o),
+                           **({"material": o["rbx_material"],
+                               "color": list(COLORS[o["rbx_color"]])} if o.get("rbx_material") else {}),
+                           **({"texture": os.path.basename(o["rbx_texture"])} if o.get("rbx_texture") else
+                              {"texture": "palette.png"} if not o.get("rbx_material") else {})}
+                  for o in objs},
+    }
+    import shutil
+    for o in objs:
+        if o.get("rbx_texture"):
+            dst = os.path.join(outdir, os.path.basename(o["rbx_texture"]))
+            if os.path.abspath(o["rbx_texture"]) != os.path.abspath(dst):
+                shutil.copy(o["rbx_texture"], dst)
+    import json
+    with open(os.path.join(outdir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
 
     for o in bpy.context.view_layer.objects:
         o.select_set(o in objs)
@@ -595,7 +789,7 @@ def export(name, outdir, join_all=True, render=True, fmt=("fbx", "obj", "glb")):
 
 # --------------------------------------------------------------- render ----
 
-def render_previews(name, outdir, objs=None, res=720, samples=48):
+def render_previews(name, outdir, objs=None, res=720, samples=32):
     """Render two 3/4 views (front and back) with Cycles on the CPU."""
     objs = objs or mesh_objects()
     scn = bpy.context.scene
@@ -621,11 +815,11 @@ def render_previews(name, outdir, objs=None, res=720, samples=48):
     radius = max((hi - lo).length / 2, 0.5)
 
     # ground
-    bpy.ops.mesh.primitive_plane_add(size=radius * 20, location=(center.x, center.y, lo.z - 0.001))
+    bpy.ops.mesh.primitive_plane_add(size=radius * 20, location=(center.x, center.y, lo.z + 0.002 * radius))
     ground = bpy.context.active_object
     gm = bpy.data.materials.new("ground")
     gm.use_nodes = True
-    gm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.35, 0.38, 0.33, 1)
+    gm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.62, 0.68, 0.76, 1)
     ground.data.materials.append(gm)
 
     bpy.ops.object.light_add(type="SUN", rotation=(math.radians(50), math.radians(10), math.radians(35)))
@@ -638,7 +832,9 @@ def render_previews(name, outdir, objs=None, res=720, samples=48):
     cam = bpy.data.objects.new("cam", cam_data)
     scn.collection.objects.link(cam)
     scn.camera = cam
-    dist = radius / math.tan(cam_data.angle / 2) * 1.15
+    dist = radius / math.tan(cam_data.angle / 2) * 0.98
+    cam_data.clip_start = max(0.01, dist * 0.01)
+    cam_data.clip_end = dist * 10
 
     out = []
     for label, yaw in (("front", -35), ("back", 145)):
@@ -648,7 +844,9 @@ def render_previews(name, outdir, objs=None, res=720, samples=48):
                                         math.sin(el))) * dist
         direction = center - cam.location
         cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
-        p = os.path.join(outdir, f"preview_{label}.png")
+        p = os.path.join(outdir, f"preview_{label}.jpg")
+        scn.render.image_settings.file_format = "JPEG"
+        scn.render.image_settings.quality = 90
         scn.render.filepath = p
         bpy.ops.render.render(write_still=True)
         out.append(p)

@@ -1,0 +1,17 @@
+{
+  "name": "pine_medium",
+  "size_studs": [
+    7.671,
+    13.724,
+    7.585
+  ],
+  "triangles": 264,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "pine_medium": {
+      "triangles": 264,
+      "texture": "palette.png"
+    }
+  }
+}

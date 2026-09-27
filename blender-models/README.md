@@ -19,8 +19,9 @@ python3 build.py models/crate.py --no-render   # skip preview images (faster)
 | `<name>.glb` | glTF, also importable into Roblox and most engines |
 | `palette.png` | The color texture, if you need to set `TextureID` manually |
 | `<name>.blend` | Open in desktop Blender to tweak by hand |
-| `preview_front.png`, `preview_back.png` | Rendered previews |
+| `preview_front.jpg`, `preview_back.jpg` | Rendered previews |
 | `info.txt` | Size in studs, triangle count, Roblox limit warnings |
+| `manifest.json` | Parts, materials, collision, category - read by `roblox/tools/build_roblox.py` |
 
 ## Importing into Roblox Studio
 
@@ -32,6 +33,9 @@ python3 build.py models/crate.py --no-render   # skip preview images (faster)
 4. If the colors come in grey, set the MeshPart's `TextureID` to the uploaded
    `palette.png`, or add a `SurfaceAppearance` with it as the ColorMap.
 
+All models share one `palette.png` (upload it once). Boards and signs also carry their own
+image texture (embedded in the FBX, copies in `textures/`).
+
 Roblox limits: 20,000 triangles per mesh. `info.txt` warns if you go over;
 use `rbx.decimate(obj, 0.5)` or split the model.
 
@@ -42,6 +46,8 @@ Create `models/whatever.py`:
 ```python
 NAME = "lamp_post"   # output folder / file name
 JOIN = True          # False = separate MeshParts (doors, wheels, moving parts)
+CATEGORY = "Props"   # Workspace.Map folder the Roblox setup script sorts it into
+COLLISION = "Default"  # or "PreciseConvexDecomposition" for ramps, arches, houses
 
 def build(rbx):
     rbx.cylinder(0.3, 10, loc=(0, 0, 5), col="dark_metal", sides=8)
@@ -64,8 +70,31 @@ All take `loc=(x,y,z)`, `rot=(deg,deg,deg)`, `col="name"` or `col=(r,g,b)`.
 `displace_noise` (rocks/terrain), `jitter` (hand-made low-poly look), `taper`,
 `bend`, `twist`, `duplicate`, `join`, `shade_smooth`, `shade_flat`.
 
+**More shapes**: `tube(points)` (rails, frames, handles), `heightfield(size, res, height_fn)`
+(terrain / mountains).
+
 **Color**: `paint(obj, col)`, `paint_faces(obj, col, where=lambda center, normal: ...)`.
 Named colors are in `rbx.COLORS`.
 
-Examples: `models/crate.py` (bevels, boolean cut-outs), `models/sword.py`
-(extruded profiles), `models/tree.py` (tapering, jittered low-poly).
+**Special parts**: `glow(obj, col)` makes a Neon part (or `material="Glass"`), `textured(obj, png, uv_fn)`
+gives a part its own image, `group(obj, "Door")` keeps pieces together as one MeshPart.
+
+## What's in `models/`
+
+| Group | Models |
+|-------|--------|
+| Snowboards | `board_frostbite`, `board_inferno`, `board_viper`, `board_cosmic`, `board_sunset`, `board_rookie` |
+| Buildings | `lodge`, `cabin`, `board_shop` |
+| Mountains | `mountain_peak`, `mountain_range`, `mountain_hill` |
+| Nature | `pine_tall`, `pine_medium`, `pine_small`, `pine_leaning`, `rock_boulder`, `rock_flat`, `rock_cluster`, `ice_crystals` |
+| Park | `kicker_small`, `kicker_big`, `rail_flat`, `rail_kink`, `grind_box`, `gate_start`, `gate_finish`, `slalom_red`, `slalom_blue`, `snow_fence` |
+| Props | `lamp_post`, `signpost`, `lift_tower`, `lift_chair`, `campfire`, `snowman`, `bench`, `crate` |
+
+Shared builders live in `models/_*.py` (boards, houses, terrain, nature, park, signs).
+
+Other tools:
+- `python3 sheet.py out/_sheet.png out/board_*` builds a contact sheet of previews
+- `python3 showcase.py` composes the exported `.glb` files into a resort scene and renders `out/_showcase.jpg`
+- `python3 sfx/make_sfx.py` synthesizes the sound effects into `sfx/out/`
+
+Roblox scripts, effects and the install guide are in `../roblox/`.

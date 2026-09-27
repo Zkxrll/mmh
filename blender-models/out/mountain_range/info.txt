@@ -1,0 +1,14 @@
+Model: mountain_range
+Size (studs): X 1000.00  Y(depth) 400.00  Z(height) 236.49
+  -> in Roblox (Y is up): 1000.00 x 236.49 x 400.00
+Colors in palette: 5
+  mesh 'mountain_range': 15478 triangles
+Total triangles: 15478
+Files:
+  palette.png
+  mountain_range.fbx
+  mountain_range.obj
+  mountain_range.glb
+  mountain_range.blend
+  preview_front.jpg
+  preview_back.jpg

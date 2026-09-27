@@ -1,5 +1,6 @@
 # Wooden crate with a cut-out hand hole - shows boolean cuts and bevels. 4x4x4 studs.
 NAME = "crate"
+CATEGORY = "Props"
 
 
 def build(rbx):

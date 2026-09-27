@@ -1,0 +1,17 @@
+Model: lift_tower
+Size (studs): X 18.00  Y(depth) 4.50  Z(height) 33.45
+  -> in Roblox (Y is up): 18.00 x 33.45 x 4.50
+Colors in palette: 8
+  mesh 'lift_tower_Main': 1000 triangles
+  mesh 'lift_tower_Neon_bright_red': 20 triangles
+Total triangles: 1020
+Special parts (applied by the Roblox setup script):
+  lift_tower_Neon_bright_red: Material Neon, Color bright_red
+Files:
+  palette.png
+  lift_tower.fbx
+  lift_tower.obj
+  lift_tower.glb
+  lift_tower.blend
+  preview_front.jpg
+  preview_back.jpg

@@ -1,0 +1,14 @@
+Model: mountain_peak
+Size (studs): X 600.00  Y(depth) 600.00  Z(height) 298.99
+  -> in Roblox (Y is up): 600.00 x 298.99 x 600.00
+Colors in palette: 5
+  mesh 'mountain_peak': 17278 triangles
+Total triangles: 17278
+Files:
+  palette.png
+  mountain_peak.fbx
+  mountain_peak.obj
+  mountain_peak.glb
+  mountain_peak.blend
+  preview_front.jpg
+  preview_back.jpg

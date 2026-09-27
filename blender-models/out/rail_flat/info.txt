@@ -1,0 +1,14 @@
+Model: rail_flat
+Size (studs): X 16.56  Y(depth) 1.40  Z(height) 2.69
+  -> in Roblox (Y is up): 16.56 x 2.69 x 1.40
+Colors in palette: 3
+  mesh 'rail_flat': 348 triangles
+Total triangles: 348
+Files:
+  palette.png
+  rail_flat.fbx
+  rail_flat.obj
+  rail_flat.glb
+  rail_flat.blend
+  preview_front.jpg
+  preview_back.jpg

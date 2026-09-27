@@ -1,0 +1,17 @@
+{
+  "name": "rail_kink",
+  "size_studs": [
+    24.559,
+    5.294,
+    1.4
+  ],
+  "triangles": 820,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Park",
+  "parts": {
+    "rail_kink": {
+      "triangles": 820,
+      "texture": "palette.png"
+    }
+  }
+}

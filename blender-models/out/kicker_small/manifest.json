@@ -1,0 +1,17 @@
+{
+  "name": "kicker_small",
+  "size_studs": [
+    15.75,
+    5.2,
+    9.48
+  ],
+  "triangles": 168,
+  "collision": "PreciseConvexDecomposition",
+  "category": "Park",
+  "parts": {
+    "kicker_small": {
+      "triangles": 168,
+      "texture": "palette.png"
+    }
+  }
+}

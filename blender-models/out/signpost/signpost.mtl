@@ -1,0 +1,42 @@
+# Blender 5.0.1 MTL File: 'None'
+# www.blender.org
+
+newmtl Palette
+Ns 39.999996
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd palette.png
+
+newmtl tex_signpost_arrows.png
+Ns 302.500000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd ../../textures/signpost_arrows.png
+
+newmtl tex_signpost_arrows.png.001
+Ns 302.500000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd ../../textures/signpost_arrows.png
+
+newmtl tex_signpost_arrows.png.002
+Ns 302.500000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd ../../textures/signpost_arrows.png

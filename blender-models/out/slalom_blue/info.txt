@@ -1,0 +1,14 @@
+Model: slalom_blue
+Size (studs): X 4.64  Y(depth) 0.24  Z(height) 6.60
+  -> in Roblox (Y is up): 4.64 x 6.60 x 0.24
+Colors in palette: 2
+  mesh 'slalom_blue': 308 triangles
+Total triangles: 308
+Files:
+  palette.png
+  slalom_blue.fbx
+  slalom_blue.obj
+  slalom_blue.glb
+  slalom_blue.blend
+  preview_front.jpg
+  preview_back.jpg

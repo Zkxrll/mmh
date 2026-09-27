@@ -1,0 +1,20 @@
+Model: board_shop
+Size (studs): X 23.65  Y(depth) 25.92  Z(height) 19.58
+  -> in Roblox (Y is up): 23.65 x 19.58 x 25.92
+Colors in palette: 18
+  mesh 'board_shop_Structure': 5482 triangles
+  mesh 'board_shop_Icicles': 272 triangles
+  mesh 'board_shop_Windows': 60 triangles
+  mesh 'board_shop_Sign': 12 triangles
+Total triangles: 5826
+Special parts (applied by the Roblox setup script):
+  board_shop_Icicles: Material Glass, Color ice
+  board_shop_Windows: Material Neon, Color window_glow
+Files:
+  palette.png
+  board_shop.fbx
+  board_shop.obj
+  board_shop.glb
+  board_shop.blend
+  preview_front.jpg
+  preview_back.jpg

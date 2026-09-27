@@ -1,0 +1,19 @@
+Model: lodge
+Size (studs): X 32.07  Y(depth) 39.03  Z(height) 33.88
+  -> in Roblox (Y is up): 32.07 x 33.88 x 39.03
+Colors in palette: 15
+  mesh 'lodge_Structure': 16858 triangles
+  mesh 'lodge_Icicles': 528 triangles
+  mesh 'lodge_Windows': 300 triangles
+Total triangles: 17686
+Special parts (applied by the Roblox setup script):
+  lodge_Icicles: Material Glass, Color ice
+  lodge_Windows: Material Neon, Color window_glow
+Files:
+  palette.png
+  lodge.fbx
+  lodge.obj
+  lodge.glb
+  lodge.blend
+  preview_front.jpg
+  preview_back.jpg

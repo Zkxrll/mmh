@@ -1,0 +1,17 @@
+{
+  "name": "mountain_hill",
+  "size_studs": [
+    300.0,
+    87.564,
+    300.0
+  ],
+  "triangles": 7918,
+  "collision": "Default",
+  "category": "Mountains",
+  "parts": {
+    "mountain_hill": {
+      "triangles": 7918,
+      "texture": "palette.png"
+    }
+  }
+}

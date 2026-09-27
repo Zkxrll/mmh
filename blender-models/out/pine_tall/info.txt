@@ -1,0 +1,14 @@
+Model: pine_tall
+Size (studs): X 9.18  Y(depth) 9.08  Z(height) 19.36
+  -> in Roblox (Y is up): 9.18 x 19.36 x 9.08
+Colors in palette: 4
+  mesh 'pine_tall': 304 triangles
+Total triangles: 304
+Files:
+  palette.png
+  pine_tall.fbx
+  pine_tall.obj
+  pine_tall.glb
+  pine_tall.blend
+  preview_front.jpg
+  preview_back.jpg

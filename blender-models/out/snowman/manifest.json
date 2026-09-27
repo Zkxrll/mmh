@@ -1,0 +1,17 @@
+{
+  "name": "snowman",
+  "size_studs": [
+    6.116,
+    7.856,
+    3.6
+  ],
+  "triangles": 1710,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "snowman": {
+      "triangles": 1710,
+      "texture": "palette.png"
+    }
+  }
+}

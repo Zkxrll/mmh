@@ -1,0 +1,14 @@
+Model: kicker_big
+Size (studs): X 26.00  Y(depth) 13.48  Z(height) 6.06
+  -> in Roblox (Y is up): 26.00 x 6.06 x 13.48
+Colors in palette: 4
+  mesh 'kicker_big': 168 triangles
+Total triangles: 168
+Files:
+  palette.png
+  kicker_big.fbx
+  kicker_big.obj
+  kicker_big.glb
+  kicker_big.blend
+  preview_front.jpg
+  preview_back.jpg

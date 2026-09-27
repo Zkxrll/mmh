@@ -1,0 +1,14 @@
+Model: pine_leaning
+Size (studs): X 7.44  Y(depth) 7.37  Z(height) 12.77
+  -> in Roblox (Y is up): 7.44 x 12.77 x 7.37
+Colors in palette: 4
+  mesh 'pine_leaning': 280 triangles
+Total triangles: 280
+Files:
+  palette.png
+  pine_leaning.fbx
+  pine_leaning.obj
+  pine_leaning.glb
+  pine_leaning.blend
+  preview_front.jpg
+  preview_back.jpg

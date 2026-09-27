@@ -1,0 +1,30 @@
+{
+  "name": "board_sunset",
+  "size_studs": [
+    1.304,
+    0.749,
+    4.844
+  ],
+  "triangles": 5684,
+  "collision": "Default",
+  "category": "Boards",
+  "parts": {
+    "board_sunset_Deck": {
+      "triangles": 3500,
+      "texture": "board_sunset_deck.png"
+    },
+    "board_sunset_Bindings": {
+      "triangles": 1016,
+      "texture": "palette.png"
+    },
+    "board_sunset_Glow": {
+      "triangles": 1168,
+      "material": "Neon",
+      "color": [
+        255,
+        40,
+        140
+      ]
+    }
+  }
+}

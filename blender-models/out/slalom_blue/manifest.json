@@ -1,0 +1,17 @@
+{
+  "name": "slalom_blue",
+  "size_studs": [
+    4.64,
+    6.6,
+    0.24
+  ],
+  "triangles": 308,
+  "collision": "Default",
+  "category": "Park",
+  "parts": {
+    "slalom_blue": {
+      "triangles": 308,
+      "texture": "palette.png"
+    }
+  }
+}

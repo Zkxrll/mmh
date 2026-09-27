@@ -1,0 +1,17 @@
+{
+  "name": "crate",
+  "size_studs": [
+    4.22,
+    4.12,
+    4.22
+  ],
+  "triangles": 1268,
+  "collision": "Default",
+  "category": "Props",
+  "parts": {
+    "crate": {
+      "triangles": 1268,
+      "texture": "palette.png"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "rail_flat",
+  "size_studs": [
+    16.559,
+    2.694,
+    1.4
+  ],
+  "triangles": 348,
+  "collision": "Default",
+  "category": "Park",
+  "parts": {
+    "rail_flat": {
+      "triangles": 348,
+      "texture": "palette.png"
+    }
+  }
+}

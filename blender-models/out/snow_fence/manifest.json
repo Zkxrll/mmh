@@ -1,0 +1,17 @@
+{
+  "name": "snow_fence",
+  "size_studs": [
+    16.4,
+    4.85,
+    0.5
+  ],
+  "triangles": 446,
+  "collision": "Default",
+  "category": "Park",
+  "parts": {
+    "snow_fence": {
+      "triangles": 446,
+      "texture": "palette.png"
+    }
+  }
+}

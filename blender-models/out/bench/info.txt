@@ -1,0 +1,14 @@
+Model: bench
+Size (studs): X 6.00  Y(depth) 2.05  Z(height) 3.32
+  -> in Roblox (Y is up): 6.00 x 3.32 x 2.05
+Colors in palette: 3
+  mesh 'bench': 656 triangles
+Total triangles: 656
+Files:
+  palette.png
+  bench.fbx
+  bench.obj
+  bench.glb
+  bench.blend
+  preview_front.jpg
+  preview_back.jpg

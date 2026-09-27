@@ -1,0 +1,17 @@
+{
+  "name": "rock_cluster",
+  "size_studs": [
+    20.089,
+    7.029,
+    10.246
+  ],
+  "triangles": 960,
+  "collision": "Default",
+  "category": "Nature",
+  "parts": {
+    "rock_cluster": {
+      "triangles": 960,
+      "texture": "palette.png"
+    }
+  }
+}

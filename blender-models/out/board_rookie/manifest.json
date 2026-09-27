@@ -1,0 +1,21 @@
+{
+  "name": "board_rookie",
+  "size_studs": [
+    1.26,
+    0.749,
+    4.8
+  ],
+  "triangles": 4516,
+  "collision": "Default",
+  "category": "Boards",
+  "parts": {
+    "board_rookie_Deck": {
+      "triangles": 3500,
+      "texture": "board_rookie_deck.png"
+    },
+    "board_rookie_Bindings": {
+      "triangles": 1016,
+      "texture": "palette.png"
+    }
+  }
+}

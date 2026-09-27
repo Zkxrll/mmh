@@ -1,0 +1,14 @@
+Model: snow_fence
+Size (studs): X 16.40  Y(depth) 0.50  Z(height) 4.85
+  -> in Roblox (Y is up): 16.40 x 4.85 x 0.50
+Colors in palette: 3
+  mesh 'snow_fence': 446 triangles
+Total triangles: 446
+Files:
+  palette.png
+  snow_fence.fbx
+  snow_fence.obj
+  snow_fence.glb
+  snow_fence.blend
+  preview_front.jpg
+  preview_back.jpg
