@@ -1,0 +1,14 @@
+Model: tree
+Size (studs): X 7.29  Y(depth) 7.29  Z(height) 15.29
+  -> in Roblox (Y is up): 7.29 x 15.29 x 7.29
+Colors in palette: 4
+  mesh 'tree': 292 triangles
+Total triangles: 292
+Files:
+  palette.png
+  tree.fbx
+  tree.obj
+  tree.glb
+  tree.blend
+  preview_front.png
+  preview_back.png

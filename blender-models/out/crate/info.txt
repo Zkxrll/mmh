@@ -1,0 +1,14 @@
+Model: crate
+Size (studs): X 4.22  Y(depth) 4.22  Z(height) 4.12
+  -> in Roblox (Y is up): 4.22 x 4.12 x 4.22
+Colors in palette: 3
+  mesh 'crate': 1268 triangles
+Total triangles: 1268
+Files:
+  palette.png
+  crate.fbx
+  crate.obj
+  crate.glb
+  crate.blend
+  preview_front.png
+  preview_back.png
