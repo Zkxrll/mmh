@@ -10,8 +10,46 @@ local SOURCES = {
     [7264587281] = 'https://raw.githubusercontent.com/Zkxrll/mmh/refs/heads/main/5N1P3RDU3LZ',
 }
 
+-- Auto Execute: arm it the moment the chain starts, so a fast teleport cannot miss it.
+-- Only games that have the toggle are listed (game -> settings file the hub writes).
+-- The player's choice is read at the moment of the teleport, not now.
+local AUTO_EXECUTE = {
+    [6035872082] = 'ZkxHub/UISettings.json',
+}
+local CHAIN = 'https://raw.githubusercontent.com/ZkxrI/ZkxHub/refs/heads/main/source'
+
 local url = SOURCES[game.GameId] or SOURCES[game.PlaceId]
 if not url then return end
+
+local settingsPath = AUTO_EXECUTE[game.GameId]
+local queue = type(queue_on_teleport) == 'function' and queue_on_teleport
+    or type(queueonteleport) == 'function' and queueonteleport
+    or type(syn) == 'table' and type(syn.queue_on_teleport) == 'function' and syn.queue_on_teleport
+if settingsPath and queue then
+    pcall(function()
+        queue(string.format([==[
+local env = (type(getgenv) == 'function' and getgenv()) or _G
+local deadline = os.clock() + 30
+while game.GameId == 0 and os.clock() < deadline do task.wait(0.1) end
+if game.GameId ~= %s then return end
+if not game:IsLoaded() then game.Loaded:Wait() end
+local job = tostring(game.JobId)
+if job ~= '' then
+	if env.ZkxHubChainJob == job then return end
+	env.ZkxHubChainJob = job
+end
+task.wait(8)
+local ok, ui = pcall(function()
+	return game:GetService('HttpService'):JSONDecode(readfile(%q))
+end)
+if ok and type(ui) == 'table' and ui.auto_execute_on_teleport == false then return end
+local okRun, err = pcall(function()
+	loadstring(game:HttpGet(%q))()
+end)
+if not okRun then warn('[ZkxHub] Auto Execute: ' .. tostring(err)) end
+]==], tostring(game.GameId), settingsPath, CHAIN))
+    end)
+end
 
 local ok, src = pcall(function() return game:HttpGet(url, true) end)
 if not ok or type(src) ~= 'string' or #src == 0 then
