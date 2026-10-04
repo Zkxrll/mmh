@@ -19171,7 +19171,8 @@ return state.NoSpreadRemote
 end
 function RivalsModsState.EnsureZkhHubInputHook()
 local state = RivalsModsState
-if state.ZkhHubInputHook and state.NoSpreadController and state.GrenadeFuseController then
+if state.ZkhHubInputHook and state.NoSpreadController and state.GrenadeFuseController
+and (RivalsRuntimeBridge.Extras.CoreLoaded ~= true or state.ExtrasController ~= nil) then
 return true
 end
 if type(setrawmetatable) ~= 'function'
@@ -19215,6 +19216,7 @@ state.GrenadeFuseController = RivalsModsState.ZkhHubGrenadeFusePrototype.new(
 inputHook:Reserve(),
 playerContext
 )
+state.ExtrasController = RivalsRuntimeBridge.Extras.NewController(inputHook:Reserve(), playerContext) or false
 return inputHook
 end)
 if not ok then
@@ -19263,6 +19265,8 @@ state.ZkhHubInputHook:Destroy()
 end
 state.NoSpreadController = nil
 state.GrenadeFuseController = nil
+RivalsRuntimeBridge.Extras.DestroyController(state.ExtrasController)
+state.ExtrasController = nil
 state.NoSpreadPlayerContext = nil
 state.ZkhHubInputHook = nil
 state.NoSpreadClientItem = nil
@@ -20035,6 +20039,7 @@ end
 if state.GrenadeFuseController then
 RivalsModsState.SyncGrenadeFuse()
 end
+RivalsRuntimeBridge.Extras.SyncControllers()
 if not (
 IsRivalsModToggleEnabled('P4S1T1')
 or IsRivalsModToggleEnabled('P4S1T2')
@@ -20051,6 +20056,7 @@ or IsRivalsModToggleEnabled('P4S2T6')
 or IsRivalsModToggleEnabled('P4S2T8')
 or IsRivalsModToggleEnabled('P4S2T9')
 or IsRivalsModToggleEnabled('P4S2T10')
+or RivalsRuntimeBridge.Extras.NeedsInputHook()
 ) then
 state.PendingEnsureHooks = false
 return false
@@ -20068,6 +20074,7 @@ end
 if RivalsModsState.EnsureZkhHubInputHook() then
 RivalsModsState.SyncNoSpreadEnabled()
 RivalsModsState.SyncGrenadeFuse()
+RivalsRuntimeBridge.Extras.SyncControllers()
 end
 RivalsModsState.EnsureGunHooks()
 RivalsModsState.EnsureMeleeHooks()
@@ -26314,6 +26321,102 @@ BuiltInSounds = {
 { name = 'Ka-Ching', soundId = 'rbxassetid://7112275565' },
 { name = 'Fatality', soundId = 'rbxassetid://158012252' },
 { name = 'Emotional Damage', soundId = 'rbxassetid://8909407664' },
+{ name = 'AR2 Head', soundId = 'rbxassetid://2062016772' },
+{ name = 'AR2 Body', soundId = 'rbxassetid://2062015952' },
+{ name = 'AR2 Limb', soundId = 'rbxassetid://6659353525' },
+{ name = 'BB HitM', soundId = 'rbxassetid://4645745735' },
+{ name = 'BB Kill', soundId = 'rbxassetid://2636743632' },
+{ name = 'PD Head', soundId = 'rbxassetid://4585351098' },
+{ name = 'PD Body', soundId = 'rbxassetid://4585364605' },
+{ name = 'Neverlose (alt)', soundId = 'rbxassetid://6607204501' },
+{ name = 'Gamesense', soundId = 'rbxassetid://4817809188' },
+{ name = 'Baimware', soundId = 'rbxassetid://3124331820' },
+{ name = 'Steve', soundId = 'rbxassetid://4965083997' },
+{ name = 'Body', soundId = 'rbxassetid://3213738472' },
+{ name = 'Ding', soundId = 'rbxassetid://7149516994' },
+{ name = 'Mario', soundId = 'rbxassetid://2815207981' },
+{ name = 'Mario 2', soundId = 'rbxassetid://5709456554' },
+{ name = 'Minecraft (alt)', soundId = 'rbxassetid://4018616850' },
+{ name = 'Among Us (alt)', soundId = 'rbxassetid://5700183626' },
+{ name = 'Button', soundId = 'rbxassetid://12221967' },
+{ name = 'Oof', soundId = 'rbxassetid://4792539171' },
+{ name = 'Sparkle', soundId = 'rbxassetid://132463144859699' },
+{ name = 'Osu', soundId = 'rbxassetid://7149919358' },
+{ name = 'Osu Combobreak', soundId = 'rbxassetid://3547118594' },
+{ name = 'Bambi', soundId = 'rbxassetid://8437203821' },
+{ name = 'Click', soundId = 'rbxassetid://8053704437' },
+{ name = 'Snow', soundId = 'rbxassetid://6455527632' },
+{ name = 'Stone', soundId = 'rbxassetid://3581383408' },
+{ name = 'Rust', soundId = 'rbxassetid://5043539486' },
+{ name = 'Splat', soundId = 'rbxassetid://12222152' },
+{ name = 'Bell', soundId = 'rbxassetid://6534947240' },
+{ name = 'Slime', soundId = 'rbxassetid://6916371803' },
+{ name = 'Saber', soundId = 'rbxassetid://8415678813' },
+{ name = 'Bat', soundId = 'rbxassetid://3333907347' },
+{ name = 'Bubble', soundId = 'rbxassetid://6534947588' },
+{ name = 'Pick', soundId = 'rbxassetid://1347140027' },
+{ name = 'Pop', soundId = 'rbxassetid://18803667669' },
+{ name = 'EmptyGun', soundId = 'rbxassetid://203691822' },
+{ name = 'Bamboo', soundId = 'rbxassetid://3769434519' },
+{ name = 'Stomp', soundId = 'rbxassetid://200632875' },
+{ name = 'Bag', soundId = 'rbxassetid://364942410' },
+{ name = 'Hitmarker', soundId = 'rbxassetid://1129547534' },
+{ name = 'LaserSlash', soundId = 'rbxassetid://199145497' },
+{ name = 'RailGunF', soundId = 'rbxassetid://199145534' },
+{ name = 'Bruh', soundId = 'rbxassetid://4275842574' },
+{ name = 'Crit', soundId = 'rbxassetid://296102734' },
+{ name = 'Bonk (alt)', soundId = 'rbxassetid://3765689841' },
+{ name = 'Clink', soundId = 'rbxassetid://711751971' },
+{ name = 'Lazer Beam', soundId = 'rbxassetid://130791043' },
+{ name = 'Windows', soundId = 'rbxassetid://9066167010' },
+{ name = 'HL Med Kit', soundId = 'rbxassetid://4720445506' },
+{ name = 'HL Door', soundId = 'rbxassetid://4996094887' },
+{ name = 'HL Crowbar', soundId = 'rbxassetid://546410481' },
+{ name = 'HL Revolver', soundId = 'rbxassetid://1678424590' },
+{ name = 'HL Elevator', soundId = 'rbxassetid://237877850' },
+{ name = 'TF2 Squasher', soundId = 'rbxassetid://3466981613' },
+{ name = 'TF2 Retro', soundId = 'rbxassetid://3466984142' },
+{ name = 'TF2 Space', soundId = 'rbxassetid://3466982899' },
+{ name = 'TF2 Vortex', soundId = 'rbxassetid://3466980212' },
+{ name = 'TF2 Beepo', soundId = 'rbxassetid://3466987025' },
+{ name = 'TF2 Pow', soundId = 'rbxassetid://679798995' },
+{ name = 'TF2 You Suck', soundId = 'rbxassetid://1058417264' },
+{ name = 'Quake Hitsound', soundId = 'rbxassetid://4868633804' },
+{ name = 'Fart', soundId = 'rbxassetid://131314452' },
+{ name = 'Fart2', soundId = 'rbxassetid://6367774932' },
+{ name = 'FortniteGuns', soundId = 'rbxassetid://3008769599' },
+{ name = 'Crickets', soundId = 'rbxassetid://2101148' },
+{ name = 'ScreamingKid', soundId = 'rbxassetid://5980352978' },
+{ name = 'BitchBot Body', soundId = 'rbxassetid://3744371342' },
+{ name = 'Minecraft Experience', soundId = 'rbxassetid://1053296915' },
+{ name = 'BameWare', soundId = 'rbxassetid://7898991882' },
+{ name = 'Fatality (alt)', soundId = 'rbxassetid://7347423703' },
+{ name = 'Fatality MKX', soundId = 'rbxassetid://6721975770' },
+{ name = 'Doublekill 1', soundId = 'rbxassetid://1950547222' },
+{ name = 'Doublekill 2', soundId = 'rbxassetid://130819307' },
+{ name = 'Killing Spree 1', soundId = 'rbxassetid://723054723' },
+{ name = 'Killing Spree 2', soundId = 'rbxassetid://937898383' },
+{ name = 'Sit Dog', soundId = 'rbxassetid://7349055654' },
+{ name = 'Csgo', soundId = 'rbxassetid://5764885315' },
+{ name = 'Bop', soundId = 'rbxassetid://8829676038' },
+{ name = 'Grenade Hit', soundId = 'rbxassetid://5684745272' },
+{ name = 'KillTrocity', soundId = 'rbxassetid://6818544945' },
+{ name = 'Double Kill', soundId = 'rbxassetid://6818527307' },
+{ name = 'Triple kill', soundId = 'rbxassetid://6818526855' },
+{ name = 'Over Kill', soundId = 'rbxassetid://6818526995' },
+{ name = 'Kill Tacular', soundId = 'rbxassetid://6818527070' },
+{ name = 'Kill Imanjaro', soundId = 'rbxassetid://6818527258' },
+{ name = 'Kill Tastrophe', soundId = 'rbxassetid://6818526916' },
+{ name = 'Kill Pocalypse', soundId = 'rbxassetid://6818527144' },
+{ name = 'Kill Ionaire', soundId = 'rbxassetid://6818527200' },
+{ name = 'Killing Spree', soundId = 'rbxassetid://6822465178' },
+{ name = 'Killing Frenzy', soundId = 'rbxassetid://6822465319' },
+{ name = 'Carrier Kill', soundId = 'rbxassetid://7139067012' },
+{ name = 'Clutch Kill', soundId = 'rbxassetid://7379106527' },
+{ name = 'Taco Bell', soundId = 'rbxassetid://5689199277' },
+{ name = 'Kombat', soundId = 'rbxassetid://8527433497' },
+{ name = 'Headshot', soundId = 'rbxassetid://8418469749' },
+{ name = 'Elevator', soundId = 'rbxassetid://8322227967' },
 },
 SoundAssetCache = {},
 SoundDropdownOptionIds = {
@@ -26966,7 +27069,7 @@ feedback.LastHitNotifyAt = os.clock()
 local amount = tonumber(damage)
 Library:Notify({
 Title = partName == 'Head' and 'Headshot' or 'Hit',
-Description = feedback.ResolveCharacterLabel(character) .. (amount and (' -' .. math.floor(amount + 0.5)) or ''),
+Description = RivalsRuntimeBridge.Extras.FeedbackText('Hit', character, damage, partName, feedback.ResolveCharacterLabel(character) .. (amount and (' -' .. math.floor(amount + 0.5)) or '')),
 Time = 1.5,
 })
 end
@@ -27005,7 +27108,7 @@ end
 if feedback.ReadToggle('PX5T2') then
 Library:Notify({
 Title = 'Eliminated',
-Description = feedback.ResolveCharacterLabel(character),
+Description = RivalsRuntimeBridge.Extras.FeedbackText('Kill', character, nil, nil, feedback.ResolveCharacterLabel(character)),
 Time = 2.5,
 })
 end
@@ -27669,11 +27772,15 @@ end
 if #candidates == 0 then
 addNamed('HumanoidRootPart')
 end
-return candidates
+return RivalsRuntimeBridge.Extras.FilterCandidates(candidates)
 end
 local GetAimbotTargetPartSamplePoints = function(part, targetType)
 if not part or not part:IsA('BasePart') then
 return {}
+end
+local extrasSamples = RivalsRuntimeBridge.Extras.SamplePoints(part, targetType)
+if extrasSamples then
+return extrasSamples
 end
 local samples = {part.Position}
 local useExtendedSampling = targetType == 'Players' or targetType == 'Practice Dummies'
@@ -27733,7 +27840,7 @@ else
 bodyCandidates[#bodyCandidates + 1] = candidate
 end
 end
-local randomBucketRoll = math.random(1, 2)
+local randomBucketRoll = RivalsRuntimeBridge.Extras.RandomBucketRoll()
 local bucketOrder = randomBucketRoll == 1
 and { headCandidates, bodyCandidates }
 or { bodyCandidates, headCandidates }
@@ -27883,6 +27990,23 @@ end
 return fallbackPoint, false, fallbackPoint ~= nil
 end
 local candidates = GetAimbotTargetPartCandidates(subject, aimPart)
+if aimPart == 'CrosshairClosest' then
+local bestPart, bestPoint, bestVisible, bestScore = nil, nil, false, nil
+for _, candidate in ipairs(candidates) do
+local point, visible, passed = ResolvePrefilteredVisiblePoint(candidate)
+if passed and point then
+local screenPoint = camera:WorldToViewportPoint(point)
+local score = (Vector2.new(screenPoint.X, screenPoint.Y) - mousePosition).Magnitude
+if (visible and not bestVisible) or (visible == bestVisible and (bestScore == nil or score < bestScore)) then
+bestPart, bestPoint, bestVisible, bestScore = candidate, point, visible, score
+end
+end
+end
+if bestPart then
+WriteCachedAimbotVisibility(subject, aimPart, bestPart, bestPoint, bestVisible, cacheProfile)
+end
+return bestPart, bestPoint, bestVisible
+end
 if aimPart == 'Closest' then
 local closestOrigin = rootPosition or camera.CFrame.Position
 local closestVisiblePart = nil
@@ -27931,7 +28055,7 @@ else
 bodyCandidates[#bodyCandidates + 1] = candidate
 end
 end
-local randomBucketRoll = math.random(1, 2)
+local randomBucketRoll = RivalsRuntimeBridge.Extras.RandomBucketRoll()
 local bucketOrder = randomBucketRoll == 1
 and { headCandidates, bodyCandidates }
 or { bodyCandidates, headCandidates }
@@ -28016,7 +28140,7 @@ allowHiddenTargets = allowHiddenTargets == true
 requireVisible = requireVisible == true
 local equippedItem = AimbotBridge.ResolveAimbotEquippedItem()
 local equippedInfo = equippedItem and equippedItem.Info or nil
-local effectiveAimPart = ((equippedInfo and equippedInfo.Class == 'Melee') or (equippedInfo and equippedInfo.Type == 'Melee')) and 'Closest' or aimPart
+local effectiveAimPart = RivalsRuntimeBridge.Extras.OverrideAimPart(((equippedInfo and equippedInfo.Class == 'Melee') or (equippedInfo and equippedInfo.Type == 'Melee')) and 'Closest' or aimPart)
 local rootPosition = HumanoidRootPart and HumanoidRootPart.Position or nil
 local maxDistanceSquared = maxDistance * maxDistance
 local part, worldPosition, isVisible = ResolvePrefilteredAimbotTargetPart(subject, effectiveAimPart, targetType, mousePosition, maxDistance, fovRadius, ignoreFov, camera, cacheProfile)
@@ -28024,11 +28148,19 @@ if not part or not part:IsA('BasePart') or not worldPosition then
 RivalsRuntimeBridge.RecordTargetValidityRejection('no_part_resolved', subject, player, targetType)
 return nil
 end
+if not isVisible and RivalsRuntimeBridge.Extras.ManipulateAllows(subject, part, worldPosition) then
+isVisible = true
+end
 if requireVisible and not isVisible then
 RivalsRuntimeBridge.RecordTargetValidityRejection('not_visible', subject, player, targetType)
 return nil
 elseif not isVisible and not allowHiddenTargets then
 RivalsRuntimeBridge.RecordTargetValidityRejection('not_visible', subject, player, targetType)
+return nil
+end
+local extrasAllowed, extrasReason = RivalsRuntimeBridge.Extras.TargetAllowed(subject, player, part, isVisible, worldPosition, mousePosition, fovRadius, ignoreFov, camera)
+if not extrasAllowed then
+RivalsRuntimeBridge.RecordTargetValidityRejection(extrasReason or 'extras_rule', subject, player, targetType)
 return nil
 end
 local worldDistance = 0
@@ -28290,6 +28422,11 @@ AimbotBridge.ResetTriggerbotReactionState()
 return false
 end
 if targetInfo.player and IsRivalsSpawnShieldActive(targetInfo.player.Character) then
+AimbotBridge.ReleaseTriggerbotMouseHold()
+AimbotBridge.ResetTriggerbotReactionState()
+return false
+end
+if not RivalsRuntimeBridge.Extras.TriggerAllowed(targetInfo, item) then
 AimbotBridge.ReleaseTriggerbotMouseHold()
 AimbotBridge.ResetTriggerbotReactionState()
 return false
@@ -29392,6 +29529,9 @@ local enabled = AimbotBridge.IsAimbotSelected()
 local keybindActive = AimbotBridge.IsAimbotEnabled()
 local shootInputHeld = AimbotBridge.IsAimbotShootInputHeld()
 local aimAssistActive = keybindActive or shootInputHeld
+if not RivalsRuntimeBridge.Extras.ActivationOk(item) then
+return false, nil, nil
+end
 local readyToFight = RivalsRuntimeBridge.IsReadyToFight()
 RivalsRuntimeBridge.RecordCharacterLoadingCheckpoint('Silent Aim', readyToFight, enabled and aimAssistActive)
 if not (enabled and aimAssistActive and readyToFight) then
@@ -29422,12 +29562,14 @@ AimbotSilentState.ShotPrimeDepth = (AimbotSilentState.ShotPrimeDepth or 0) + 1
 if AimbotBridge.ResolveAimbotSilentDebugEnabled() then
 RivalsRuntimeBridge.NotifyAimbotStatus('silent_prime', string.format('Silent Camera shot-hook: %s', targetInfo.displayName), true)
 end
+RivalsRuntimeBridge.Extras.ShotTarget = targetInfo
 return true, camera, originalCFrame
 end
 RivalsRuntimeBridge.FinishAimbotSilentShot = function(didPrime, camera, originalCFrame)
 if not didPrime then
 return
 end
+RivalsRuntimeBridge.Extras.ShotTarget = nil
 AimbotSilentState.ShotPrimeDepth = math.max((AimbotSilentState.ShotPrimeDepth or 1) - 1, 0)
 if camera and originalCFrame and Workspace.CurrentCamera == camera and RivalsRuntimeBridge.IsReadyToFight() then
 camera.CFrame = originalCFrame
@@ -29541,6 +29683,9 @@ AimbotBridge.ResetTriggerbotReactionState()
 return
 end
 local triggerTargetInfo = ResolveTriggerbotTarget(enabled, targetInfo)
+if RivalsRuntimeBridge.Extras.TriggerReleaseHold(triggerTargetInfo ~= nil) then
+return
+end
 if not triggerTargetInfo then
 AimbotBridge.ReleaseTriggerbotMouseHold()
 AimbotBridge.ResetTriggerbotReactionState()
@@ -29637,6 +29782,1880 @@ detector.Streak[player] = nil
 end
 end
 end
+-- ===== ZkxHub extras :: core =====
+-- Safe stubs first: every hook the patched code calls exists and behaves like the original game logic.
+-- If the real module below fails to load, these stay in place and nothing in the base script changes.
+RivalsRuntimeBridge.Extras = {
+Version = 1,
+Loaded = false,
+FilterCandidates = function(candidates) return candidates end,
+SamplePoints = function() return nil end,
+RandomBucketRoll = function() return math.random(1, 2) end,
+OverrideAimPart = function(aimPart) return aimPart end,
+ManipulateAllows = function() return false end,
+TargetAllowed = function() return true end,
+ActivationOk = function() return true end,
+TriggerAllowed = function() return true end,
+TriggerReleaseHold = function() return false end,
+FeedbackText = function(_, _, _, _, default) return default end,
+HealthColor = function(_, default) return default end,
+FlagFont = function(default) return default end,
+FlagSize = function(default) return default end,
+FlagText = function(text) return text end,
+SuppressCornerBox = function() return false end,
+StatusXOffset = function() return 0 end,
+DataField = function() return nil end,
+NeedsInputHook = function() return false end,
+SyncControllers = function() end,
+NewController = function() return nil end,
+DestroyController = function() end,
+EspStep = function() end,
+BuildCombatUi = function() end,
+BuildEspUi = function() end,
+BuildVisualsUi = function() end,
+BuildMiscUi = function() end,
+BuildConfigUi = function() end,
+Destroy = function() end,
+Reconcile = function() end,
+}
+xpcall(function()
+local P = RivalsRuntimeBridge.Extras
+local reported = {}
+local rng = Random.new()
+P.Cleanups = {}
+P.Destroy = function()
+for _, cleanup in ipairs(P.Cleanups) do
+pcall(cleanup)
+end
+end
+
+function P.Report(tag, err)
+if reported[tag] then
+return
+end
+reported[tag] = true
+ReportRivalsRuntimeIssue('extras_' .. tostring(tag), err)
+end
+
+-- Wraps an implementation so an error can never leak into the base script: it reports once and
+-- returns the default (the value the original code would have used).
+local function guard(tag, impl, default)
+return function(...)
+local ok, a, b = pcall(impl, ...)
+if ok then
+return a, b
+end
+P.Report(tag, a)
+if type(default) == 'function' then
+return default(...)
+end
+return default
+end
+end
+
+function P.Tog(id, default)
+local toggle = Toggles[id]
+if toggle == nil then
+return default
+end
+return toggle.Value == true
+end
+function P.Opt(id, default)
+local option = Options[id]
+if option == nil or option.Value == nil then
+return default
+end
+return option.Value
+end
+function P.Num(id, default)
+local value = tonumber(P.Opt(id, default))
+if value == nil then
+return default
+end
+return value
+end
+function P.Has(id, name, default)
+local option = Options[id]
+if option == nil then
+return default
+end
+local value = option.Value
+if type(value) ~= 'table' then
+return default
+end
+if value[name] == true then
+return true
+end
+for _, entry in ipairs(value) do
+if entry == name then
+return true
+end
+end
+return false
+end
+
+-- ---------------------------------------------------------------- indicator list
+P.IndicatorEntries = {}
+function P.Pulse(key, text, seconds)
+P.IndicatorEntries[key] = { Text = text, Until = os.clock() + (seconds or 1) }
+end
+
+-- ---------------------------------------------------------------- silent aim rules
+function P.RulesOn()
+return P.Tog('KPA0', false) and AimbotBridge.ResolveAimbotMode() == 'Silent'
+end
+
+P.FilterCandidates = guard('filter_candidates', function(candidates)
+if not P.RulesOn() then
+return candidates
+end
+local allowHead = P.Has('KPA8', 'Head', true)
+local allowBody = P.Has('KPA8', 'Body', true)
+local filtered = {}
+for _, candidate in ipairs(candidates) do
+local isHead = candidate.Name == 'HitboxHead'
+if (isHead and allowHead) or (not isHead and allowBody) then
+filtered[#filtered + 1] = candidate
+end
+end
+return filtered
+end, function(candidates) return candidates end)
+
+P.RandomBucketRoll = guard('random_bucket', function()
+if P.RulesOn() and P.Opt('KPA9', 'Closest To Crosshair') == 'Random' then
+local headChance = math.clamp(P.Num('KPAA', 50), 0, 100) / 100
+return rng:NextNumber() < headChance and 1 or 2
+end
+return math.random(1, 2)
+end, function() return math.random(1, 2) end)
+
+P.OverrideAimPart = guard('override_aim_part', function(aimPart)
+if aimPart == 'Closest' or not P.RulesOn() then
+return aimPart
+end
+if P.Opt('KPA9', 'Closest To Crosshair') == 'Random' then
+return 'Random'
+end
+return 'CrosshairClosest'
+end, function(aimPart) return aimPart end)
+
+-- Point on the (shrunken) hitbox box that lies closest to the crosshair ray.
+local function surfacePoint(part)
+local camera = Workspace.CurrentCamera
+if not camera then
+return nil
+end
+local pointer = AimbotBridge.GetAimbotPointerPosition()
+local ray = camera:ViewportPointToRay(pointer.X, pointer.Y)
+local cf = part.CFrame
+local half = part.Size * 0.5
+local shrink = 1 - math.clamp(P.Num('KPAC', 50), 0, 95) / 100
+local hx, hy, hz = half.X * shrink, half.Y * shrink, half.Z * shrink
+local origin = cf:PointToObjectSpace(ray.Origin)
+local direction = cf:VectorToObjectSpace(ray.Direction)
+if P.Tog('KPAD', false) then
+local ax, ay, az = math.abs(direction.X), math.abs(direction.Y), math.abs(direction.Z)
+if ax >= ay and ax >= az then
+hx = half.X
+elseif ay >= az then
+hy = half.Y
+else
+hz = half.Z
+end
+end
+local current = Vector3.zero
+for _ = 1, 3 do
+local t = (current - origin):Dot(direction)
+local q = origin + direction * t
+current = Vector3.new(math.clamp(q.X, -hx, hx), math.clamp(q.Y, -hy, hy), math.clamp(q.Z, -hz, hz))
+end
+return cf:PointToWorldSpace(current)
+end
+
+P.SamplePoints = guard('sample_points', function(part)
+if not part or not P.RulesOn() or P.Opt('KPAB', 'Center') ~= 'Surface' then
+return nil
+end
+if part.Name ~= 'HitboxHead' and part.Name ~= 'HitboxBody' then
+return nil
+end
+local point = surfacePoint(part)
+if not point then
+return nil
+end
+return { point, part.Position }
+end, nil)
+
+-- shield / deflect / invincibility checks shared by the silent rules and the triggerbot rules
+local function isDeflecting(player)
+local fighter = TrackedFightersByPlayer[player]
+return fighter ~= nil and RivalsRuntimeBridge.IsRivalsKatanaDeflectActiveItem(fighter.EquippedItem) == true
+end
+local function isShielded(player, character, observer)
+local state = EvaluateRivalsRiotShieldChecker(player, character, observer)
+return state ~= nil and state.IgnoreTarget == true
+end
+local function isInvulnerable(player, character)
+return IsRivalsSpawnShieldActive(character or player.Character) == true
+end
+
+P.TargetAllowed = guard('target_allowed', function(subject, player, part, isVisible, worldPosition, mousePosition, fovRadius, ignoreFov, camera)
+if not P.RulesOn() then
+return true
+end
+if P.Tog('KPA3', true) and not isVisible then
+return false, 'rule_visible'
+end
+if player then
+local character = subject or player.Character
+if P.Tog('KPA4', true) and isInvulnerable(player, character) then
+return false, 'rule_invulnerable'
+end
+if P.Tog('KPA5', true) and isDeflecting(player) then
+return false, 'rule_deflecting'
+end
+if P.Tog('KPA6', true) and isShielded(player, character, camera and camera.CFrame.Position or nil) then
+return false, 'rule_shielded'
+end
+end
+if P.Tog('KPA7', true) and ignoreFov == true and camera and worldPosition and mousePosition then
+local screenPoint, onScreen = camera:WorldToViewportPoint(worldPosition)
+if not onScreen or screenPoint.Z <= 0 then
+return false, 'rule_fov'
+end
+local radius = P.Num('P2S1S2', 170)
+if (Vector2.new(screenPoint.X, screenPoint.Y) - mousePosition).Magnitude > radius then
+return false, 'rule_fov'
+end
+end
+return true
+end, true)
+
+-- Best-effort "is the scope fully up". Returns nil when this build exposes no way to tell, which the
+-- callers treat as "do not block".
+function P.IsFullyAiming(item)
+if type(item) ~= 'table' then
+return nil
+end
+local ok, method = pcall(function() return item.IsFullyAiming end)
+if ok and type(method) == 'function' then
+local okCall, result = pcall(method, item)
+if okCall and type(result) == 'boolean' then
+return result
+end
+end
+local data = rawget(item, '_data')
+local isAiming = nil
+if type(data) == 'table' then
+isAiming = rawget(data, 'IsAiming')
+end
+local viewModel = rawget(item, 'ViewModel')
+local current = nil
+if type(viewModel) == 'table' then
+current = rawget(viewModel, 'CurrentAimValue')
+end
+if isAiming == nil and current == nil then
+return nil
+end
+if isAiming ~= true then
+return false
+end
+local info = item.Info
+local percent = type(info) == 'table' and info.AimScopePercent or nil
+if type(percent) == 'number' and type(current) == 'number' then
+return current >= percent
+end
+return true
+end
+
+P.ActivationOk = guard('activation', function(item)
+if not P.RulesOn() then
+return true
+end
+if P.Tog('KPA1', true) and AimbotBridge.ReadAimbotReloadRemaining(item) > 0 then
+return false
+end
+if P.Tog('KPA2', false) and P.IsFullyAiming(item) == false then
+return false
+end
+return true
+end, true)
+
+-- ---------------------------------------------------------------- triggerbot rules
+local trigger = { RollAt = 0, Verdict = true, LastTargetAt = 0 }
+P.TriggerAllowed = guard('trigger_allowed', function(targetInfo, item)
+if not P.Tog('KPB0', false) then
+return true
+end
+if P.Tog('KPB1', true) and AimbotBridge.ReadAimbotReloadRemaining(item) > 0 then
+return false
+end
+if P.Tog('KPB2', false) and P.IsFullyAiming(item) == false then
+return false
+end
+if P.Has('KPB3', 'Visible', true) and not targetInfo.isVisible then
+return false
+end
+local player = targetInfo.player
+if player then
+local character = targetInfo.instance or player.Character
+if P.Has('KPB3', 'Vulnerable', true) and isInvulnerable(player, character) then
+return false
+end
+if P.Has('KPB3', 'Not Deflecting', true) and isDeflecting(player) then
+return false
+end
+if P.Has('KPB3', 'Not Shielded', true) then
+local camera = Workspace.CurrentCamera
+if isShielded(player, character, camera and camera.CFrame.Position or nil) then
+return false
+end
+end
+end
+local chance = math.clamp(P.Num('KPB4', 100), 1, 100)
+if chance < 100 then
+local now = os.clock()
+if now - trigger.RollAt > 0.25 then
+trigger.RollAt = now
+trigger.Verdict = rng:NextNumber(0, 100) < chance
+end
+return trigger.Verdict
+end
+return true
+end, true)
+
+-- Keeps a held trigger (flamethrower style) down for a moment after the target is lost.
+P.TriggerReleaseHold = guard('trigger_release', function(hasTarget)
+if not P.Tog('KPB0', false) then
+return false
+end
+local now = os.clock()
+if hasTarget then
+trigger.LastTargetAt = now
+return false
+end
+return (now - trigger.LastTargetAt) < math.clamp(P.Num('KPB5', 0), 0, 1)
+end, false)
+
+-- ---------------------------------------------------------------- shot packet hook (anti katana / manipulate)
+local function decodeCFrame(value)
+if type(value) ~= 'table' then
+return nil
+end
+local x, y, z = value['\0'], value['\1'], value['\2']
+local rx, ry, rz = value['\3'], value['\4'], value['\5']
+if type(x) ~= 'number' or type(y) ~= 'number' or type(z) ~= 'number'
+or type(rx) ~= 'number' or type(ry) ~= 'number' or type(rz) ~= 'number' then
+return nil
+end
+return CFrame.new(x, y, z) * CFrame.fromOrientation(rx, ry, rz)
+end
+local function encodeCFrame(cf)
+local rx, ry, rz = cf:ToOrientation()
+return { ['\0'] = cf.X, ['\1'] = cf.Y, ['\2'] = cf.Z, ['\3'] = rx, ['\4'] = ry, ['\5'] = rz }
+end
+
+-- Looks for a shot origin (within `reach` studs of the real one) that has a clear line to the point.
+-- Returns visibleAlready, origin: (true, origin) when nothing blocks, (false, newOrigin) when a
+-- workable alternative exists, (false, nil) when none does.
+local MANIPULATE_REACH = 9.9
+local function findVisibleOrigin(origin, part, point)
+local character = part.Parent
+local params = ResolveAimbotVisibilityRaycastParams(character)
+local function blockedBy(from)
+return Workspace:Raycast(from, point - from, params)
+end
+local firstHit = blockedBy(origin)
+if firstHit == nil then
+return true, origin
+end
+local offset = point - origin
+local distance = offset.Magnitude
+if distance < 0.01 then
+return false, nil
+end
+local direction = offset / distance
+local reach = math.min(MANIPULATE_REACH, distance - part.Size.Magnitude / 2)
+local pushed = false
+if reach > 0 and firstHit.Distance < reach then
+local forward = origin + direction * reach
+if blockedBy(forward) == nil then
+return false, forward
+end
+pushed = true
+end
+local up = Vector3.yAxis
+local side = direction:Cross(math.abs(direction:Dot(up)) > 0.99 and Vector3.xAxis or up).Unit
+local other = side:Cross(direction).Unit
+local samples = pushed and 6 or 7
+for index = 0, samples - 1 do
+local angle = math.tau * index / samples
+local candidate = origin + (side * math.cos(angle) + other * math.sin(angle)) * MANIPULATE_REACH
+if blockedBy(candidate) == nil then
+return false, candidate
+end
+end
+return false, nil
+end
+
+local manipulateCache = setmetatable({}, { __mode = 'k' })
+P.ManipulateAllows = guard('manipulate_allows', function(subject, part, worldPosition)
+if not P.Tog('KPD1', false) or AimbotBridge.ResolveAimbotMode() ~= 'Silent' then
+return false
+end
+if not part or typeof(worldPosition) ~= 'Vector3' then
+return false
+end
+if P.Opt('KPD2', 'On Best Target') == 'On Best Target' then
+local committed = RivalsRuntimeBridge.AimbotTargeting and RivalsRuntimeBridge.AimbotTargeting.Committed
+local committedInstance = committed and committed.instance
+if committedInstance ~= nil and committedInstance ~= subject then
+return false
+end
+end
+local camera = Workspace.CurrentCamera
+if not camera then
+return false
+end
+local now = os.clock()
+local cached = manipulateCache[subject]
+if cached and now - cached.At < 0.1 then
+return cached.Result
+end
+local _, origin = findVisibleOrigin(camera.CFrame.Position, part, worldPosition)
+local result = origin ~= nil
+manipulateCache[subject] = { At = now, Result = result }
+return result
+end, false)
+
+local function localHit(origin, part, point)
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Include
+params.FilterDescendantsInstances = { part }
+local hit = Workspace:Raycast(origin, point - origin, params)
+local worldPoint = hit and hit.Position or point
+local objectPoint = part.CFrame:PointToObjectSpace(worldPoint)
+if objectPoint == Vector3.zero then
+return nil
+end
+return objectPoint
+end
+
+local function manipulatePacket(shot)
+local target = P.ShotTarget
+if not target or not target.part or not target.part.Parent or typeof(target.worldPosition) ~= 'Vector3' then
+return
+end
+local aim = decodeCFrame(shot['\0'])
+if not aim then
+return
+end
+local part, point = target.part, target.worldPosition
+local visible, newOrigin = findVisibleOrigin(aim.Position, part, point)
+if visible or newOrigin == nil then
+return
+end
+local hitLocal = localHit(newOrigin, part, point)
+if not hitLocal then
+return
+end
+local look = encodeCFrame(CFrame.lookAt(newOrigin, point))
+shot['\0'] = look
+shot['\1'] = encodeCFrame(CFrame.lookAt(newOrigin, point))
+shot['\2'] = part
+shot['\3'] = encodeCFrame(CFrame.new(hitLocal))
+P.Pulse('manipulated', 'Manipulated', 0.8)
+end
+
+local function handlePacket(controller, packet)
+if packet.type ~= 'StartShooting' then
+return
+end
+local args = packet.args
+local shot = type(args) == 'table' and args['\1'] or nil
+if type(shot) ~= 'table' then
+return
+end
+local inner = controller._playerContext and controller._playerContext.inner
+local item = inner and inner.fighterState:GetItemById(packet.objectId)
+if item == nil then
+return
+end
+local info = rawget(item, 'Info')
+if type(info) ~= 'table' or rawget(info, 'Type') ~= 'Gun' then
+return
+end
+if P.Tog('KPD0', false) then
+local hit = shot['\2']
+if typeof(hit) == 'Instance' then
+local model = hit:FindFirstAncestorOfClass('Model')
+local player = model and Players:GetPlayerFromCharacter(model)
+if player then
+local origin = decodeCFrame(shot['\0'])
+if isDeflecting(player) or isShielded(player, model, origin and origin.Position or nil) then
+packet.block = true
+P.Pulse('antikatana', 'Anti Katana: shot blocked', 1.2)
+return
+end
+end
+end
+end
+if P.Tog('KPD1', false) then
+manipulatePacket(shot)
+end
+end
+
+function P.NeedsInputHook()
+return P.Tog('KPD0', false) or P.Tog('KPD1', false)
+end
+
+P.NewController = guard('new_controller', function(binding, playerContext)
+local controller = { _inputBinding = binding, _playerContext = playerContext }
+binding:SetHandler(function(packet)
+local ok, err = pcall(handlePacket, controller, packet)
+if not ok then
+P.Report('packet_handler', err)
+end
+end)
+return controller
+end, nil)
+
+function P.DestroyController(controller)
+if controller and controller._inputBinding then
+pcall(function() controller._inputBinding:Destroy() end)
+end
+end
+
+P.SyncControllers = guard('sync_controllers', function()
+local controller = RivalsModsState.ExtrasController
+if not controller then
+return
+end
+local enabled = P.NeedsInputHook()
+if controller._inputBinding.enabled ~= enabled then
+controller._inputBinding:SetEnabled(enabled)
+end
+end, nil)
+
+-- ---------------------------------------------------------------- feedback text templates
+local function applyTemplate(template, character, damage, partName)
+local player = typeof(character) == 'Instance' and Players:GetPlayerFromCharacter(character) or nil
+local name = player and player.Name or (typeof(character) == 'Instance' and character.Name or 'player')
+local display = player and (player.DisplayName ~= '' and player.DisplayName or player.Name) or name
+local amount = tonumber(damage)
+local values = {
+NAME = name,
+DNAME = display,
+DMG = amount and tostring(math.floor(amount + 0.5)) or '?',
+PART = tostring(partName or 'Body'),
+}
+return (string.gsub(template, '%%(%u+)%%', function(token)
+return values[token]
+end))
+end
+P.ApplyTemplate = applyTemplate
+
+P.FeedbackText = guard('feedback_text', function(kind, character, damage, partName, default)
+local template = P.Opt(kind == 'Hit' and 'KPF2' or 'KPF4', '')
+if type(template) ~= 'string' or template:match('^%s*$') then
+return default
+end
+return applyTemplate(template, character, damage, partName)
+end, function(_, _, _, _, default) return default end)
+
+-- ---------------------------------------------------------------- health bar colour modes
+P.HealthColor = guard('health_color', function(ratio, default)
+local mode = P.Opt('KPH0', 'Reactive')
+if mode == 'Solid' then
+return P.Opt('KPH1', default)
+end
+if mode == 'Gradient' then
+local low = P.Opt('KPH2', Color3.fromRGB(255, 60, 60))
+local high = P.Opt('KPH3', Color3.fromRGB(60, 255, 60))
+return low:Lerp(high, math.clamp(ratio or 0, 0, 1))
+end
+return default
+end, function(_, default) return default end)
+
+-- ---------------------------------------------------------------- flag text style (rank / win streak / deflecting)
+local flagFonts = { UI = 0, System = 1, Plex = 2, Monospace = 3 }
+P.FlagFont = guard('flag_font', function(default)
+return flagFonts[P.Opt('KPG1', 'Same As Text')] or default
+end, function(default) return default end)
+P.FlagSize = guard('flag_size', function(default)
+local size = P.Num('KPG2', 0)
+if size > 0 then
+return size
+end
+return default
+end, function(default) return default end)
+P.FlagText = guard('flag_text', function(text)
+local case = P.Opt('KPG3', 'Normal')
+local surround = P.Opt('KPG4', 'None')
+if (case == 'Normal' and surround == 'None') or text == '' then
+return text
+end
+local pair = RivalsRuntimeBridge.EspExtras.Surrounds[surround]
+local lines = string.split(text, '\n')
+for index, line in ipairs(lines) do
+if case == 'UPPER' then
+line = string.upper(line)
+elseif case == 'lower' then
+line = string.lower(line)
+end
+if pair and line ~= '' then
+line = pair[1] .. line .. pair[2]
+end
+lines[index] = line
+end
+return table.concat(lines, '\n')
+end, function(text) return text end)
+
+P.CoreLoaded = true
+end, function(err)
+RivalsRuntimeBridge.Extras.CoreError = tostring(err)
+task.defer(function()
+pcall(ReportRivalsRuntimeIssue, 'extras_core_load', tostring(err))
+end)
+return err
+end)
+-- ===== ZkxHub extras :: end core =====
+
+-- ===== ZkxHub extras :: ESP =====
+-- Independent Drawing-based layer. It never touches the base ESP objects; the only coupling is two tiny
+-- hooks (corner box suppression, status text offset) that return the original behaviour when off.
+xpcall(function()
+local P = RivalsRuntimeBridge.Extras
+local entries = {}
+local frameId = 0
+local stamp = setmetatable({}, { __mode = 'k' })
+local indicatorTexts = {}
+
+local BONE_NAMES = {
+Head = true, Torso = true, UpperTorso = true, LowerTorso = true,
+LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
+RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
+RightUpperArm = true, RightLowerArm = true, RightHand = true,
+LeftLeg = true, RightLeg = true, LeftArm = true, RightArm = true,
+}
+local BLACK = Color3.new(0, 0, 0)
+
+local function newDrawing(kind, props)
+local ok, drawable = pcall(Drawing.new, kind)
+if not ok or drawable == nil then
+return nil
+end
+for key, value in pairs(props or {}) do
+pcall(function() drawable[key] = value end)
+end
+return drawable
+end
+
+local function slot(entry, name, kind, props)
+local cached = entry.drawables[name]
+if cached ~= nil then
+return cached or nil
+end
+local drawable = newDrawing(kind, props)
+entry.drawables[name] = drawable or false
+return drawable
+end
+
+local function mark(drawable)
+if drawable then
+stamp[drawable] = frameId
+if drawable.Visible ~= true then
+drawable.Visible = true
+end
+end
+end
+
+local function sweep(entry)
+for _, drawable in pairs(entry.drawables) do
+if drawable and stamp[drawable] ~= frameId and drawable.Visible then
+drawable.Visible = false
+end
+end
+end
+
+local function destroyEntry(entry)
+for _, drawable in pairs(entry.drawables) do
+if drawable then
+pcall(function() drawable:Remove() end)
+end
+end
+entry.drawables = {}
+end
+
+local function clearAll()
+for player, entry in pairs(entries) do
+destroyEntry(entry)
+entries[player] = nil
+end
+for index, drawable in pairs(indicatorTexts) do
+pcall(function() drawable:Remove() end)
+indicatorTexts[index] = nil
+end
+end
+table.insert(P.Cleanups, clearAll)
+
+local function readScope(scope)
+local prefix = 'KPE' .. scope
+local function tog(id, default) return P.Tog(prefix .. id, default) end
+local function opt(id, default) return P.Opt(prefix .. id, default) end
+local function num(id, default) return P.Num(prefix .. id, default) end
+return {
+On = tog('0', false),
+Skeleton = tog('SK', false),
+SkeletonColor = opt('SKC', Color3.new(1, 1, 1)),
+SkeletonGradient = tog('SKG', false),
+SkeletonColor2 = opt('SKH', Color3.fromRGB(255, 70, 70)),
+SkeletonThickness = num('SKT', 1),
+HeadMarker = tog('HM', false),
+HeadMarkerColor = opt('HMC', Color3.fromRGB(255, 255, 255)),
+HeadMarkerShape = opt('HMS', 'Circle'),
+HeadMarkerFilled = tog('HMF', false),
+HeadMarkerOutline = tog('HMO', true),
+HeadMarkerSize = num('HMR', 1),
+Tracer = tog('TR', false),
+TracerColor = opt('TRC', Color3.fromRGB(255, 255, 255)),
+TracerGradient = tog('TRG', false),
+TracerColor2 = opt('TRH', Color3.fromRGB(255, 70, 70)),
+TracerThickness = num('TRT', 1),
+TracerFrom = opt('TRF', 'Bottom'),
+TracerTo = opt('TRW', 'Feet'),
+TracerOutline = tog('TRO', true),
+FullBox = tog('FB', false),
+FullBoxColor = opt('FBC', Color3.fromRGB(255, 255, 255)),
+FilledBox = tog('FF', false),
+FilledBoxColor = opt('FFC', Color3.fromRGB(255, 60, 60)),
+FilledBoxOpacity = num('FFA', 0.25),
+FilledBoxGradient = tog('FFG', false),
+FilledBoxColor2 = opt('FFH', Color3.fromRGB(60, 60, 255)),
+AmmoBar = tog('AB', false),
+AmmoBarColor = opt('ABC', Color3.fromRGB(80, 160, 255)),
+AmmoBarColor2 = opt('ABH', Color3.fromRGB(255, 70, 70)),
+AmmoBarMode = opt('ABM', 'Reactive'),
+}
+end
+
+-- Rivals rigs hang each limb off an AnimationConstraint (torso/head use a Motor6D), so read both and
+-- join the two parts each joint connects. If the part names are not the usual limb names, fall back to
+-- any joint between body parts so a differently named rig still gets a skeleton.
+local function addBone(bones, seen, a, b)
+if a and b and a ~= b and a:IsA('BasePart') and b:IsA('BasePart') then
+local key = a.Name .. '|' .. b.Name
+if not seen[key] then
+seen[key] = true
+bones[#bones + 1] = { a, b }
+end
+end
+end
+
+local function jointParts(descendant)
+if descendant:IsA('AnimationConstraint') then
+local a0, a1 = descendant.Attachment0, descendant.Attachment1
+return a0 and a0.Parent, a1 and a1.Parent
+end
+if descendant:IsA('Motor6D') then
+return descendant.Part0, descendant.Part1
+end
+return nil, nil
+end
+
+local function isBodyPart(part)
+local name = part.Name
+return name ~= 'HumanoidRootPart' and name:sub(1, 6) ~= 'Hitbox'
+end
+
+local function collectBones(character)
+local descendants = character:GetDescendants()
+local bones, seen = {}, {}
+for _, descendant in ipairs(descendants) do
+local a, b = jointParts(descendant)
+if a and b and BONE_NAMES[a.Name] and BONE_NAMES[b.Name] then
+addBone(bones, seen, a, b)
+end
+end
+if #bones <= 2 then
+for _, descendant in ipairs(descendants) do
+local a, b = jointParts(descendant)
+if a and b and isBodyPart(a) and isBodyPart(b) then
+addBone(bones, seen, a, b)
+end
+end
+end
+if #bones == 0 then
+local head = character:FindFirstChild('HitboxHead')
+local body = character:FindFirstChild('HitboxBody')
+if head and body then
+bones[1] = { head, body }
+end
+end
+return bones
+end
+
+local function reactiveColor(ratio)
+return Color3.fromRGB(255, 60, 60):Lerp(Color3.fromRGB(60, 255, 60), math.clamp(ratio, 0, 1))
+end
+
+local function drawPlayer(player, entry, scope, cam, vp, uiScale, myPos, maxDistance, fitStatic, mouse)
+local character = player.Character
+if not character then
+return
+end
+local parts = ReadCharacterEspParts(character, entry.parts)
+entry.parts = parts
+local root = parts and parts.HumanoidRootPart
+if not root then
+return
+end
+if myPos and (root.Position - myPos).Magnitude > maxDistance then
+return
+end
+local rootScreen = cam:WorldToViewportPoint(root.Position)
+if rootScreen.Z <= 0 then
+return
+end
+local bounds = nil
+if not fitStatic then
+bounds = GetHitboxScreenBounds(parts, character, cam)
+end
+if bounds == nil then
+local height = (5.5 / rootScreen.Z) * vp.Y * 0.5
+local width = height * 0.55
+bounds = {
+MinX = rootScreen.X - width / 2, MaxX = rootScreen.X + width / 2,
+MinY = rootScreen.Y - height / 2, MaxY = rootScreen.Y + height / 2,
+Width = width, Height = height, CenterX = rootScreen.X, CenterY = rootScreen.Y,
+}
+end
+local minX, maxX, minY, maxY = bounds.MinX, bounds.MaxX, bounds.MinY, bounds.MaxY
+local width, height = math.max(maxX - minX, 1), math.max(maxY - minY, 1)
+local boxPos, boxSize = Vector2.new(minX, minY), Vector2.new(width, height)
+
+if scope.FilledBox then
+local strips = scope.FilledBoxGradient and 10 or 1
+local stripHeight = height / strips
+for index = 1, strips do
+local strip = slot(entry, 'fill' .. index, 'Square', { Filled = true, Thickness = 1 })
+if strip then
+strip.Position = Vector2.new(minX, minY + stripHeight * (index - 1))
+strip.Size = Vector2.new(width, math.ceil(stripHeight) + (index < strips and 1 or 0))
+strip.Color = strips > 1 and scope.FilledBoxColor:Lerp(scope.FilledBoxColor2, (index - 0.5) / strips) or scope.FilledBoxColor
+strip.Transparency = math.clamp(scope.FilledBoxOpacity, 0, 1)
+mark(strip)
+end
+end
+end
+
+if scope.FullBox then
+local outline = slot(entry, 'boxOutline', 'Square', { Filled = false })
+if outline then
+outline.Position, outline.Size, outline.Color = boxPos, boxSize, BLACK
+outline.Thickness = 3 * uiScale + 1
+outline.Transparency = 1
+mark(outline)
+end
+local box = slot(entry, 'box', 'Square', { Filled = false })
+if box then
+box.Position, box.Size, box.Color = boxPos, boxSize, scope.FullBoxColor
+box.Thickness = math.max(1, uiScale)
+box.Transparency = 1
+mark(box)
+end
+end
+
+if scope.Skeleton then
+if entry.bonesCharacter ~= character or os.clock() - entry.bonesAt > 3 then
+entry.bones = collectBones(character)
+entry.bonesCharacter = character
+entry.bonesAt = os.clock()
+end
+for index, bone in ipairs(entry.bones) do
+local a, b = bone[1], bone[2]
+if a.Parent and b.Parent then
+local pa, pb = cam:WorldToViewportPoint(a.Position), cam:WorldToViewportPoint(b.Position)
+if pa.Z > 0 and pb.Z > 0 then
+local line = slot(entry, 'bone' .. index, 'Line')
+if line then
+line.From, line.To = Vector2.new(pa.X, pa.Y), Vector2.new(pb.X, pb.Y)
+line.Thickness = scope.SkeletonThickness
+line.Transparency = 1
+if scope.SkeletonGradient then
+local t = math.clamp((((pa.Y + pb.Y) / 2) - minY) / height, 0, 1)
+line.Color = scope.SkeletonColor:Lerp(scope.SkeletonColor2, t)
+else
+line.Color = scope.SkeletonColor
+end
+mark(line)
+end
+end
+end
+end
+end
+
+if scope.HeadMarker then
+local head = character:FindFirstChild('HitboxHead') or character:FindFirstChild('Head')
+if head then
+local headScreen = cam:WorldToViewportPoint(head.Position)
+if headScreen.Z > 0 then
+local center = Vector2.new(headScreen.X, headScreen.Y)
+local radius = math.max(3, height * 0.06) * math.clamp(scope.HeadMarkerSize, 0.2, 4)
+local shape = scope.HeadMarkerShape
+if shape == 'Circle' then
+if scope.HeadMarkerOutline then
+local outline = slot(entry, 'headOutline', 'Circle', { NumSides = 24, Filled = false })
+if outline then
+outline.Position, outline.Radius, outline.Color = center, radius + 1, BLACK
+outline.Thickness = 3
+outline.Transparency = 1
+mark(outline)
+end
+end
+local circle = slot(entry, 'head', 'Circle', { NumSides = 24 })
+if circle then
+circle.Position, circle.Radius, circle.Color = center, radius, scope.HeadMarkerColor
+circle.Filled = scope.HeadMarkerFilled
+circle.Thickness = 1
+circle.Transparency = 1
+mark(circle)
+end
+elseif shape == 'Diamond' then
+local function diamond(name, color, size, filled, thickness)
+local quad = slot(entry, name, 'Quad')
+if quad then
+quad.PointA = center + Vector2.new(0, -size)
+quad.PointB = center + Vector2.new(size, 0)
+quad.PointC = center + Vector2.new(0, size)
+quad.PointD = center + Vector2.new(-size, 0)
+quad.Color, quad.Filled, quad.Thickness, quad.Transparency = color, filled, thickness, 1
+mark(quad)
+end
+end
+if scope.HeadMarkerOutline then
+diamond('headOutline', BLACK, radius + 1.5, false, 3)
+end
+diamond('head', scope.HeadMarkerColor, radius, scope.HeadMarkerFilled, 1)
+else
+local function arm(name, from, to, color, thickness)
+local line = slot(entry, name, 'Line')
+if line then
+line.From, line.To, line.Color, line.Thickness, line.Transparency = from, to, color, thickness, 1
+mark(line)
+end
+end
+local h = Vector2.new(radius, 0)
+local v = Vector2.new(0, radius)
+if scope.HeadMarkerOutline then
+arm('headOutlineH', center - h, center + h, BLACK, 3)
+arm('headOutlineV', center - v, center + v, BLACK, 3)
+end
+arm('headH', center - h, center + h, scope.HeadMarkerColor, 1)
+arm('headV', center - v, center + v, scope.HeadMarkerColor, 1)
+end
+end
+end
+end
+
+if scope.Tracer then
+local origin
+local from = scope.TracerFrom
+if from == 'Center' then
+origin = Vector2.new(vp.X / 2, vp.Y / 2)
+elseif from == 'Top' then
+origin = Vector2.new(vp.X / 2, 0)
+elseif from == 'Mouse' then
+origin = mouse
+else
+origin = Vector2.new(vp.X / 2, vp.Y)
+end
+local target = Vector2.new(bounds.CenterX, maxY)
+if scope.TracerTo == 'Head' then
+local head = character:FindFirstChild('HitboxHead') or character:FindFirstChild('Head')
+local headScreen = head and cam:WorldToViewportPoint(head.Position)
+if headScreen and headScreen.Z > 0 then
+target = Vector2.new(headScreen.X, headScreen.Y)
+else
+target = Vector2.new(bounds.CenterX, minY)
+end
+end
+if scope.TracerOutline then
+local outline = slot(entry, 'tracerOutline', 'Line')
+if outline then
+outline.From, outline.To, outline.Color = origin, target, BLACK
+outline.Thickness = scope.TracerThickness + 2
+outline.Transparency = 1
+mark(outline)
+end
+end
+local segments = scope.TracerGradient and 8 or 1
+for index = 1, segments do
+local line = slot(entry, 'tracer' .. index, 'Line')
+if line then
+local t0, t1 = (index - 1) / segments, index / segments
+line.From, line.To = origin:Lerp(target, t0), origin:Lerp(target, t1)
+line.Color = segments > 1 and scope.TracerColor:Lerp(scope.TracerColor2, (index - 0.5) / segments) or scope.TracerColor
+line.Thickness = scope.TracerThickness
+line.Transparency = 1
+mark(line)
+end
+end
+end
+
+if scope.AmmoBar then
+local info = GetCachedWeaponInfo(player)
+local ammo, maxAmmo = info and info.ammo, info and info.maxAmmo
+if type(ammo) == 'number' and type(maxAmmo) == 'number' and maxAmmo > 0 and maxAmmo < math.huge then
+local ratio = math.clamp(ammo / maxAmmo, 0, 1)
+local barWidth = math.max(3 * uiScale, 2)
+local x = maxX + 3 * uiScale
+local background = slot(entry, 'ammoBg', 'Square', { Filled = true })
+if background then
+background.Position, background.Size, background.Color = Vector2.new(x, minY), Vector2.new(barWidth, height), BLACK
+background.Transparency = 0.6
+mark(background)
+end
+local fillHeight = math.max(height * ratio, ratio > 0 and 1 or 0)
+local fill = slot(entry, 'ammoFill', 'Square', { Filled = true })
+if fill and fillHeight > 0 then
+fill.Position = Vector2.new(x, maxY - fillHeight)
+fill.Size = Vector2.new(barWidth, fillHeight)
+local mode = scope.AmmoBarMode
+if mode == 'Solid' then
+fill.Color = scope.AmmoBarColor
+elseif mode == 'Gradient' then
+fill.Color = scope.AmmoBarColor2:Lerp(scope.AmmoBarColor, ratio)
+else
+fill.Color = reactiveColor(ratio)
+end
+fill.Transparency = 1
+mark(fill)
+end
+end
+end
+end
+
+local function stepIndicators(cam)
+local list = {}
+if P.Tog('KPI0', true) then
+local now = os.clock()
+for key, value in pairs(P.IndicatorEntries) do
+if value.Until > now then
+list[#list + 1] = value.Text
+else
+P.IndicatorEntries[key] = nil
+end
+end
+table.sort(list)
+end
+local corner = P.Opt('KPI1', 'Top Left')
+local vp = cam.ViewportSize
+for index, text in ipairs(list) do
+local drawable = indicatorTexts[index]
+if drawable == nil then
+drawable = newDrawing('Text', { Outline = true, Size = 14, Font = 3, Color = Color3.new(1, 1, 1), Center = false })
+indicatorTexts[index] = drawable
+end
+if drawable then
+drawable.Text = text
+local y = 140 + (index - 1) * 16
+if corner == 'Bottom Left' or corner == 'Bottom Right' then
+y = vp.Y - 160 - (index - 1) * 16
+end
+local x = (corner == 'Top Right' or corner == 'Bottom Right') and (vp.X - 180) or 12
+drawable.Position = Vector2.new(x, y)
+drawable.Visible = true
+end
+end
+for index = #list + 1, #indicatorTexts do
+local drawable = indicatorTexts[index]
+if drawable and drawable.Visible then
+drawable.Visible = false
+end
+end
+end
+
+P.EspStep = function(deltaTime)
+local ok, err = pcall(function()
+frameId = frameId + 1
+local cam = Workspace.CurrentCamera
+if cam == nil then
+return
+end
+local enemy, team = readScope('E'), readScope('T')
+if not enemy.On and not team.On then
+if next(entries) ~= nil then
+for player, entry in pairs(entries) do
+destroyEntry(entry)
+entries[player] = nil
+end
+end
+stepIndicators(cam)
+return
+end
+local vp = cam.ViewportSize
+local uiScale = (vp.Y > 0 and vp.Y or 1080) / 1080
+local character = LP.Character
+local myRoot = character and character:FindFirstChild('HumanoidRootPart')
+local myPos = myRoot and myRoot.Position or nil
+local maxDistance = P.Num('KPEMD', 1000)
+local fitStatic = P.Opt('KPEBF', 'Dynamic') == 'Static'
+local mouse = UserInputService:GetMouseLocation()
+local myTeamId = LP:GetAttribute('TeamID')
+for _, player in ipairs(Players:GetPlayers()) do
+if player ~= LP then
+local entry = entries[player]
+local active = IsPlayerInLocalEnvironment(player)
+local isTeam = false
+if active then
+local theirTeam = player:GetAttribute('TeamID')
+if myTeamId and theirTeam then
+isTeam = myTeamId == theirTeam
+elseif player.Team and LP.Team then
+isTeam = player.Team == LP.Team
+end
+end
+local scope = isTeam and team or enemy
+if active and scope.On then
+if entry == nil then
+entry = { drawables = {}, bones = {}, bonesAt = 0 }
+entries[player] = entry
+end
+local drawOk, drawErr = pcall(drawPlayer, player, entry, scope, cam, vp, uiScale, myPos, maxDistance, fitStatic, mouse)
+if not drawOk then
+P.Report('esp_draw', drawErr)
+end
+sweep(entry)
+elseif entry then
+sweep(entry)
+end
+end
+end
+for player, entry in pairs(entries) do
+if player.Parent == nil then
+destroyEntry(entry)
+entries[player] = nil
+end
+end
+stepIndicators(cam)
+end)
+if not ok then
+P.Report('esp_step', err)
+end
+end
+
+P.SuppressCornerBox = function(isTeammate)
+local ok, result = pcall(function()
+local prefix = isTeammate and 'KPET' or 'KPEE'
+return P.Tog(prefix .. '0', false) and P.Tog(prefix .. 'FB', false)
+end)
+return ok and result == true
+end
+
+P.StatusXOffset = function(isTeammate)
+local ok, result = pcall(function()
+local prefix = isTeammate and 'KPET' or 'KPEE'
+if P.Tog(prefix .. '0', false) and P.Tog(prefix .. 'AB', false) then
+return 7 * ((Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize.Y or 1080) / 1080)
+end
+return 0
+end)
+return ok and result or 0
+end
+end, function(err)
+RivalsRuntimeBridge.Extras.EspError = tostring(err)
+task.defer(function()
+pcall(ReportRivalsRuntimeIssue, 'extras_esp_load', tostring(err))
+end)
+return err
+end)
+-- ===== ZkxHub extras :: end ESP =====
+
+-- ===== ZkxHub extras :: misc (images, config transfer, spoofer) =====
+xpcall(function()
+local P = RivalsRuntimeBridge.Extras
+
+-- ---------------------------------------------------------------- crosshair image library
+P.Images = { Loaded = false, List = {}, Path = 'ZkxHub/Crosshair Images.json' }
+
+local function trim(value)
+if type(value) ~= 'string' then
+return ''
+end
+return value:match('^%s*(.-)%s*$') or ''
+end
+
+function P.Images.Load()
+local images = P.Images
+if images.Loaded then
+return
+end
+images.Loaded = true
+images.List = {}
+if type(isfile) ~= 'function' or not isfile(images.Path) then
+return
+end
+local ok, decoded = pcall(function()
+return HttpService:JSONDecode(readfile(images.Path))
+end)
+local records = ok and type(decoded) == 'table' and (decoded.images or decoded) or nil
+if type(records) ~= 'table' then
+return
+end
+local seen = {}
+for _, record in ipairs(records) do
+if type(record) == 'table' then
+local name, source = trim(record.name), trim(record.source)
+if name ~= '' and source ~= '' and not seen[name] then
+seen[name] = true
+table.insert(images.List, { name = name, source = source })
+end
+end
+end
+table.sort(images.List, function(left, right) return left.name < right.name end)
+end
+
+function P.Images.Save()
+local images = P.Images
+if type(writefile) ~= 'function' then
+return false
+end
+return (pcall(function()
+if type(makefolder) == 'function' and type(isfolder) == 'function' and not isfolder('ZkxHub') then
+makefolder('ZkxHub')
+end
+writefile(images.Path, HttpService:JSONEncode({ version = 1, images = images.List }))
+end))
+end
+
+function P.Images.Names()
+P.Images.Load()
+local names = {}
+for _, record in ipairs(P.Images.List) do
+table.insert(names, record.name)
+end
+return names
+end
+
+function P.Images.Find(name)
+P.Images.Load()
+for _, record in ipairs(P.Images.List) do
+if record.name == name then
+return record
+end
+end
+return nil
+end
+
+function P.Images.Add(nameValue, sourceValue)
+local name, source = trim(nameValue), trim(sourceValue)
+if name == '' or source == '' or P.Images.Find(name) then
+return false
+end
+if source:match('^%d+$') then
+source = 'rbxassetid://' .. source
+end
+table.insert(P.Images.List, { name = name, source = source })
+table.sort(P.Images.List, function(left, right) return left.name < right.name end)
+return P.Images.Save()
+end
+
+function P.Images.Remove(name)
+P.Images.Load()
+for index, record in ipairs(P.Images.List) do
+if record.name == name then
+table.remove(P.Images.List, index)
+return P.Images.Save()
+end
+end
+return false
+end
+
+function P.Images.Refresh()
+local option = Options.KPX3
+if option and type(option.SetValues) == 'function' then
+option:SetValues(P.Images.Names())
+end
+end
+
+function P.Images.UseSelected()
+local option = Options.KPX3
+local record = option and P.Images.Find(option.Value)
+if not record then
+Library:Notify('Select a saved image first.')
+return false
+end
+if Options.P1S26I1 then
+Options.P1S26I1:SetValue(record.source)
+end
+if Options.P1S26D1 then
+Options.P1S26D1:SetValue('Image')
+end
+if Toggles.P1S26T1 and not Toggles.P1S26T1.Value then
+Toggles.P1S26T1:SetValue(true)
+end
+RivalsRuntimeBridge.ViewmodelVisuals.RefreshAll()
+return true
+end
+
+-- ---------------------------------------------------------------- config transfer (clipboard)
+local function configPath(name)
+local folder = tostring(SaveManager.Folder) .. '/settings'
+local sub = SaveManager.SubFolder
+if type(sub) == 'string' and sub ~= '' then
+folder = folder .. '/' .. sub
+end
+return folder .. '/' .. name .. '.json'
+end
+
+function P.ExportConfig()
+local clip = setclipboard or toclipboard
+if type(clip) ~= 'function' then
+Library:Notify('Export needs setclipboard, which this executor lacks.')
+return false
+end
+local name = '__extras_export'
+local ok, err = SaveManager:Save(name)
+if not ok then
+Library:Notify('Export failed: ' .. tostring(err))
+return false
+end
+local path = configPath(name)
+local readOk, data = pcall(readfile, path)
+pcall(delfile, path)
+if not readOk or type(data) ~= 'string' then
+Library:Notify('Export failed: could not read the temporary file.')
+return false
+end
+clip(data)
+Library:Notify('Config copied to clipboard (' .. #data .. ' chars).')
+return true
+end
+
+function P.ImportConfig(text)
+text = trim(text)
+if text == '' then
+Library:Notify('Paste a config into the box first.')
+return false
+end
+local decodeOk, decoded = pcall(function() return HttpService:JSONDecode(text) end)
+if not decodeOk or type(decoded) ~= 'table' or type(decoded.objects) ~= 'table' then
+Library:Notify('That does not look like an exported config.')
+return false
+end
+local name = '__extras_import'
+SaveManager:CheckFolderTree()
+local path = configPath(name)
+local writeOk, writeErr = pcall(writefile, path, text)
+if not writeOk then
+Library:Notify('Import failed: ' .. tostring(writeErr))
+return false
+end
+local loaded, loadErr = SaveManager:Load(name)
+pcall(delfile, path)
+if not loaded then
+Library:Notify('Import failed: ' .. tostring(loadErr))
+return false
+end
+task.defer(function()
+pcall(P.Reconcile)
+end)
+Library:Notify('Config imported.')
+return true
+end
+
+-- ---------------------------------------------------------------- spoofer extras: names / avatar text, own profile data
+local Names = { Objects = setmetatable({}, { __mode = 'k' }), Records = setmetatable({}, { __mode = 'k' }), Connections = {}, Started = false, Accum = 0 }
+P.Names = Names
+
+local function isTextObject(instance)
+return instance:IsA('TextLabel') or instance:IsA('TextButton')
+end
+local function isImageObject(instance)
+return instance:IsA('ImageLabel') or instance:IsA('ImageButton')
+end
+
+function Names.Collect(root)
+for _, descendant in ipairs(root:GetDescendants()) do
+if isTextObject(descendant) or isImageObject(descendant) then
+Names.Objects[descendant] = true
+end
+end
+end
+
+function Names.Start()
+if Names.Started then
+return
+end
+local playerGui = LP:FindFirstChildOfClass('PlayerGui')
+if not playerGui then
+return
+end
+Names.Started = true
+Names.Collect(playerGui)
+Names.Connections[1] = playerGui.DescendantAdded:Connect(function(descendant)
+if isTextObject(descendant) or isImageObject(descendant) then
+Names.Objects[descendant] = true
+end
+end)
+Names.Connections[2] = playerGui.DescendantRemoving:Connect(function(descendant)
+Names.Objects[descendant] = nil
+Names.Records[descendant] = nil
+end)
+end
+
+function Names.Stop()
+Names.Restore()
+for _, connection in ipairs(Names.Connections) do
+pcall(function() connection:Disconnect() end)
+end
+Names.Connections = {}
+Names.Started = false
+Names.Objects = setmetatable({}, { __mode = 'k' })
+end
+
+function Names.Restore()
+for object, record in pairs(Names.Records) do
+pcall(function()
+if isTextObject(object) then
+if object.Text == record.spoofed then
+object.Text = record.orig
+end
+elseif object.Image == record.spoofed then
+object.Image = record.orig
+end
+end)
+end
+Names.Records = setmetatable({}, { __mode = 'k' })
+end
+
+local function escapePattern(text)
+return (text:gsub('([%^%$%(%)%%%.%[%]%*%+%-%?])', '%%%1'))
+end
+local function escapeReplacement(text)
+return (text:gsub('%%', '%%%%'))
+end
+
+function Names.Targets()
+local targets = {}
+local any = false
+for _, player in ipairs(Players:GetPlayers()) do
+local isLocal = player == LP
+local nameOn = P.Tog(isLocal and 'KPN1' or 'KPN5', false)
+local displayOn = P.Tog(isLocal and 'KPN3' or 'KPN7', false)
+local avatarOn = P.Tog(isLocal and 'KPN9' or 'KPNB', false)
+if nameOn or displayOn or avatarOn then
+any = true
+targets[#targets + 1] = {
+Player = player,
+Name = nameOn and trim(P.Opt(isLocal and 'KPN2' or 'KPN6', '')) or '',
+Display = displayOn and trim(P.Opt(isLocal and 'KPN4' or 'KPN8', '')) or '',
+Avatar = avatarOn and trim(tostring(P.Opt(isLocal and 'KPNA' or 'KPNC', ''))) or '',
+}
+end
+end
+return targets, any
+end
+
+function Names.Step()
+local targets, any = Names.Targets()
+if not any then
+if next(Names.Records) ~= nil then
+Names.Restore()
+end
+return
+end
+Names.Start()
+for object in pairs(Names.Objects) do
+if object.Parent ~= nil then
+local isText = isTextObject(object)
+local current = isText and object.Text or object.Image
+local record = Names.Records[object]
+local base = current
+if record and current == record.spoofed then
+base = record.orig
+end
+local result = base
+for _, target in ipairs(targets) do
+local player = target.Player
+if isText then
+if target.Display ~= '' and player.DisplayName ~= '' and result:find(player.DisplayName, 1, true) then
+result = result:gsub(escapePattern(player.DisplayName), escapeReplacement(target.Display))
+end
+if target.Name ~= '' and result:find(player.Name, 1, true) then
+result = result:gsub(escapePattern(player.Name), escapeReplacement(target.Name))
+end
+elseif target.Avatar ~= '' then
+local lowered = result:lower()
+if (lowered:find('thumb', 1, true) or lowered:find('headshot', 1, true) or lowered:find('avatar', 1, true))
+and result:find(tostring(player.UserId), 1, true) then
+result = result:gsub(tostring(player.UserId), escapeReplacement(target.Avatar))
+end
+end
+end
+if result ~= base then
+Names.Records[object] = { orig = base, spoofed = result }
+if isText then
+object.Text = result
+else
+object.Image = result
+end
+elseif record then
+if isText then
+object.Text = base
+else
+object.Image = base
+end
+Names.Records[object] = nil
+end
+end
+end
+end
+
+-- own profile fields served through the game's player-data proxy (the cosmetics module owns the proxy)
+P.DataFields = {
+EventCurrency = { 'KPS1', 'KPS2', 1 },
+WeaponKeys = { 'KPS3', 'KPS4', 1 },
+Level = { 'KPS5', 'KPS6', 1 },
+CasualWins = { 'KPS7', 'KPS8', 1 },
+RankedWins = { 'KPS9', 'KPSA', 1 },
+CasualWinPercent = { 'KPSB', 'KPSC', 0.01 },
+RankedWinPercent = { 'KPSD', 'KPSE', 0.01 },
+RankedCurrentELO = { 'KPSF', 'KPSG', 1 },
+FavoriteMap = { 'KPSH', 'KPSI', 'text' },
+}
+
+local function dataFieldImpl(fieldName)
+local spec = P.DataFields[fieldName]
+if spec == nil or not P.Tog(spec[1], false) then
+return nil
+end
+local raw = P.Opt(spec[2], '')
+if spec[3] == 'text' then
+raw = trim(tostring(raw))
+return raw ~= '' and raw or nil
+end
+local number = tonumber(raw)
+if number == nil then
+return nil
+end
+return number * spec[3]
+end
+
+-- sits on the game's player-data read path, so it must never throw
+P.DataField = function(fieldName)
+local ok, value = pcall(dataFieldImpl, fieldName)
+if ok then
+return value
+end
+return nil
+end
+
+function P.RefreshData()
+local cosmetics = P.CosmeticsRef
+if not cosmetics then
+return false
+end
+local anyOn = false
+for _, spec in pairs(P.DataFields) do
+if P.Tog(spec[1], false) then
+anyOn = true
+break
+end
+end
+if anyOn then
+local controller = cosmetics.ResolvePlayerDataController()
+local currentData = controller and rawget(controller, 'CurrentData') or nil
+if type(currentData) == 'table' then
+pcall(cosmetics.LoadPlayerDataProxy, currentData)
+end
+end
+for fieldName in pairs(P.DataFields) do
+pcall(cosmetics.TriggerNativeDataChanged, fieldName)
+end
+return true
+end
+
+-- spoof text scan rides on the ESP step so there is a single patched call site
+local baseEspStep = P.EspStep
+P.EspStep = function(deltaTime)
+baseEspStep(deltaTime)
+Names.Accum = Names.Accum + (type(deltaTime) == 'number' and deltaTime or 0.016)
+if Names.Accum < 0.5 then
+return
+end
+Names.Accum = 0
+local ok, err = pcall(Names.Step)
+if not ok then
+P.Report('spoof_text', err)
+end
+end
+table.insert(P.Cleanups, function()
+Names.Stop()
+end)
+
+end, function(err)
+RivalsRuntimeBridge.Extras.MiscError = tostring(err)
+task.defer(function()
+pcall(ReportRivalsRuntimeIssue, 'extras_misc_load', tostring(err))
+end)
+return err
+end)
+-- ===== ZkxHub extras :: end misc =====
+
+-- ===== ZkxHub extras :: UI builders (each one adds groupboxes to an existing tab) =====
+xpcall(function()
+local P = RivalsRuntimeBridge.Extras
+
+local function safeGroup(tab, side, title, builder)
+local ok, err = pcall(function()
+local box = side == 'L' and tab:AddLeftGroupbox(title) or tab:AddRightGroupbox(title)
+builder(box)
+end)
+if not ok then
+P.Report('ui_' .. title, err)
+end
+end
+
+local function toggle(box, id, text, default, tip)
+return box:AddToggle(id, { Text = text, Default = default, Tooltip = tip })
+end
+local function slider(box, id, text, default, min, max, rounding, suffix, tip)
+return box:AddSlider(id, {
+Text = text, Default = default, Min = min, Max = max,
+Rounding = rounding or 0, Suffix = suffix or '', Compact = true, Tooltip = tip,
+})
+end
+local function dropdown(box, id, text, values, default, tip)
+return box:AddDropdown(id, { Text = text, Values = values, Default = default, Multi = false, Tooltip = tip })
+end
+local function multi(box, id, text, values, default, tip)
+return box:AddDropdown(id, { Text = text, Values = values, Default = default, Multi = true, Tooltip = tip })
+end
+local function color(box, id, text, default)
+return box:AddLabel(text):AddColorPicker(id, { Default = default, Title = text })
+end
+local function input(box, id, text, default, placeholder, tip)
+return box:AddInput(id, {
+Text = text, Default = default or '', Placeholder = placeholder or '',
+AllowEmpty = true, EmptyReset = '', Tooltip = tip,
+})
+end
+
+-- ---------------------------------------------------------------- Combat tab
+P.BuildCombatUi = function(tab)
+safeGroup(tab, 'L', 'Silent Aim Rules', function(box)
+toggle(box, 'KPA0', 'Enable Rules', false, 'Applies while Aimbot Mode is Silent. Off keeps the original behaviour.')
+toggle(box, 'KPA1', 'Not Reloading', true, 'Silent shots are not redirected while reloading.')
+toggle(box, 'KPA2', 'Scoped In', false, 'Only redirect shots while fully scoped in.')
+toggle(box, 'KPA3', 'Target Visible', true, 'Target must be visible.')
+toggle(box, 'KPA4', 'Target Vulnerable', true, 'Skips targets with spawn protection.')
+toggle(box, 'KPA5', 'Target Not Deflecting', true, 'Skips targets with an active Katana deflect.')
+toggle(box, 'KPA6', 'Target Not Shielded', true, 'Skips targets whose Riot Shield blocks the shot.')
+toggle(box, 'KPA7', 'Target Within FOV', true, 'Keeps the FOV circle binding even when Ignore FOV is on.')
+multi(box, 'KPA8', 'Allowed Hitboxes', { 'Head', 'Body' }, { 'Head', 'Body' }, 'Hitboxes silent aim may use.')
+dropdown(box, 'KPA9', 'Hitbox Selection', { 'Closest To Crosshair', 'Random' }, 'Closest To Crosshair', 'Replaces Aim Part while the rules are on.')
+slider(box, 'KPAA', 'Head %', 50, 0, 100, 0, '%', 'Random selection only: chance of picking the head first.')
+dropdown(box, 'KPAB', 'Aim Point', { 'Center', 'Surface' }, 'Center', 'Surface aims at the point of the hitbox nearest your crosshair.')
+slider(box, 'KPAC', 'Surface Reduction', 50, 0, 95, 0, '%', 'Shrinks the hitbox used for the Surface point.')
+toggle(box, 'KPAD', 'Preserve Depth', false, 'Keeps full size along the viewing direction when shrinking.')
+end)
+
+safeGroup(tab, 'R', 'Triggerbot Rules', function(box)
+toggle(box, 'KPB0', 'Enable Rules', false, 'Extra conditions for the triggerbot.')
+toggle(box, 'KPB1', 'Not Reloading', true)
+toggle(box, 'KPB2', 'Scoped In', false)
+multi(box, 'KPB3', 'Target Filters', { 'Visible', 'Vulnerable', 'Not Deflecting', 'Not Shielded' },
+{ 'Visible', 'Vulnerable', 'Not Deflecting', 'Not Shielded' }, 'Conditions a target must meet before the trigger fires.')
+slider(box, 'KPB4', 'Activation Chance', 100, 1, 100, 0, '%', 'Re-rolled about four times a second.')
+slider(box, 'KPB5', 'Release Delay', 0, 0, 1, 2, ' s', 'Keeps a held trigger down this long after the target is lost.')
+end)
+
+safeGroup(tab, 'R', 'Shot Hooks', function(box)
+local antiKatana = toggle(box, 'KPD0', 'Anti Katana', false, 'Cancels your own gun shots at a target that is deflecting or shielded.')
+local manipulate = toggle(box, 'KPD1', 'Manipulate', false, 'Silent aim can use targets that are only reachable by moving the shot origin up to about 10 studs. The server may reject it.')
+dropdown(box, 'KPD2', 'Manipulation Check', { 'On Best Target', 'On All Targets' }, 'On Best Target', 'On Best Target only widens the committed target.')
+toggle(box, 'KPI0', 'Show Indicator List', true, 'Small on-screen list for Manipulated and Anti Katana blocks.')
+dropdown(box, 'KPI1', 'Indicator Corner', { 'Top Left', 'Top Right', 'Bottom Left', 'Bottom Right' }, 'Top Left')
+local function sync()
+pcall(RivalsModsState.EnsureHooks)
+P.SyncControllers()
+end
+antiKatana:OnChanged(GuardRivalsCallback('Extras_AntiKatana', sync))
+manipulate:OnChanged(GuardRivalsCallback('Extras_Manipulate', sync))
+end)
+end
+
+-- ---------------------------------------------------------------- ESP tab
+P.BuildEspUi = function(tab)
+local function scope(box, letter, title)
+local p = 'KPE' .. letter
+toggle(box, p .. '0', 'Enable ' .. title, false, 'Master switch for the extras below.')
+toggle(box, p .. 'SK', 'Skeleton', false)
+color(box, p .. 'SKC', 'Skeleton Color', Color3.fromRGB(255, 255, 255))
+toggle(box, p .. 'SKG', 'Skeleton Gradient', false, 'Blends to the second color from top to bottom.')
+color(box, p .. 'SKH', 'Skeleton Color 2', Color3.fromRGB(255, 70, 70))
+slider(box, p .. 'SKT', 'Skeleton Thickness', 1, 1, 6, 0)
+toggle(box, p .. 'HM', 'Head Marker', false)
+dropdown(box, p .. 'HMS', 'Head Shape', { 'Circle', 'Cross', 'Diamond' }, 'Circle')
+color(box, p .. 'HMC', 'Head Color', Color3.fromRGB(255, 255, 255))
+toggle(box, p .. 'HMF', 'Head Filled', false)
+toggle(box, p .. 'HMO', 'Head Outline', true)
+slider(box, p .. 'HMR', 'Head Size', 1, 0.2, 4, 1, 'x')
+toggle(box, p .. 'TR', 'Tracer', false)
+color(box, p .. 'TRC', 'Tracer Color', Color3.fromRGB(255, 255, 255))
+toggle(box, p .. 'TRG', 'Tracer Gradient', false)
+color(box, p .. 'TRH', 'Tracer Color 2', Color3.fromRGB(255, 70, 70))
+slider(box, p .. 'TRT', 'Tracer Thickness', 1, 1, 6, 0)
+dropdown(box, p .. 'TRF', 'Tracer From', { 'Bottom', 'Center', 'Top', 'Mouse' }, 'Bottom')
+dropdown(box, p .. 'TRW', 'Tracer To', { 'Feet', 'Head' }, 'Feet')
+toggle(box, p .. 'TRO', 'Tracer Outline', true)
+toggle(box, p .. 'FB', 'Full Box', false, 'Replaces the corner box with a full rectangle.')
+color(box, p .. 'FBC', 'Full Box Color', Color3.fromRGB(255, 255, 255))
+toggle(box, p .. 'FF', 'Filled Box', false)
+color(box, p .. 'FFC', 'Fill Color', Color3.fromRGB(255, 60, 60))
+slider(box, p .. 'FFA', 'Fill Opacity', 0.25, 0, 1, 2)
+toggle(box, p .. 'FFG', 'Fill Gradient', false, 'Blends top to bottom.')
+color(box, p .. 'FFH', 'Fill Color 2', Color3.fromRGB(60, 60, 255))
+toggle(box, p .. 'AB', 'Ammo Bar', false)
+color(box, p .. 'ABC', 'Ammo Color', Color3.fromRGB(80, 160, 255))
+color(box, p .. 'ABH', 'Ammo Color 2', Color3.fromRGB(255, 70, 70))
+dropdown(box, p .. 'ABM', 'Ammo Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive')
+end
+safeGroup(tab, 'L', 'Enemy Extras', function(box) scope(box, 'E', 'Enemy Extras') end)
+safeGroup(tab, 'R', 'Teammate Extras', function(box) scope(box, 'T', 'Teammate Extras') end)
+
+safeGroup(tab, 'L', 'Extras Layout', function(box)
+dropdown(box, 'KPEBF', 'Box Fit', { 'Dynamic', 'Static' }, 'Dynamic', 'Dynamic follows the hitboxes, Static is a fixed ratio.')
+slider(box, 'KPEMD', 'Max Distance', 1000, 50, 1500, 0, ' studs')
+end)
+
+safeGroup(tab, 'R', 'Flag Text', function(box)
+dropdown(box, 'KPG1', 'Flag Font', { 'Same As Text', 'UI', 'System', 'Plex', 'Monospace' }, 'Same As Text', 'Font of the rank / win streak / deflecting text.')
+slider(box, 'KPG2', 'Flag Size', 0, 0, 32, 0, ' px', '0 keeps the original size.')
+dropdown(box, 'KPG3', 'Flag Case', { 'Normal', 'UPPER', 'lower' }, 'Normal')
+dropdown(box, 'KPG4', 'Flag Surround', { 'None', '[ ]', '( )', '< >', '- -', '* *' }, 'None')
+end)
+
+safeGroup(tab, 'L', 'Health Bar Colors', function(box)
+dropdown(box, 'KPH0', 'Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive', 'Reactive is the original behaviour.')
+color(box, 'KPH1', 'Solid Color', Color3.fromRGB(60, 255, 60))
+color(box, 'KPH2', 'Gradient Low', Color3.fromRGB(255, 60, 60))
+color(box, 'KPH3', 'Gradient High', Color3.fromRGB(60, 255, 60))
+end)
+end
+
+-- ---------------------------------------------------------------- Crosshair tab
+P.BuildVisualsUi = function(tab)
+safeGroup(tab, 'R', 'Saved Images', function(box)
+input(box, 'KPX1', 'Name', '', 'my-crosshair')
+input(box, 'KPX2', 'Source', '', 'asset id, file path or URL')
+box:AddButton({
+Text = 'Save Image',
+Func = GuardRivalsCallback('Extras_ImageAdd', function()
+if P.Images.Add(Options.KPX1.Value, Options.KPX2.Value) then
+Options.KPX1:SetValue('')
+Options.KPX2:SetValue('')
+P.Images.Refresh()
+Library:Notify('Saved image.')
+else
+Library:Notify('Use a unique name and a source.')
+end
+end),
+})
+box:AddDropdown('KPX3', { Values = P.Images.Names(), Multi = false, Text = 'Saved Images', Searchable = true, AllowNull = true })
+box:AddButton({
+Text = 'Use Selected As Crosshair',
+Func = GuardRivalsCallback('Extras_ImageUse', P.Images.UseSelected),
+})
+box:AddButton({
+Text = 'Remove Selected',
+Func = GuardRivalsCallback('Extras_ImageRemove', function()
+local option = Options.KPX3
+if option and option.Value and P.Images.Remove(option.Value) then
+option:SetValue(nil)
+P.Images.Refresh()
+Library:Notify('Removed image.')
+else
+Library:Notify('Select a saved image first.')
+end
+end),
+})
+end)
+end
+
+-- ---------------------------------------------------------------- Misc tab (spoofer extras)
+P.BuildMiscUi = function(tab)
+P.MiscTab = tab
+safeGroup(tab, 'L', 'Spoofer: Names & Avatar', function(box)
+box:AddLabel('Rewrites text and avatar thumbnails on your screen only.', true)
+local rows = {
+{ 'You', 'KPN1', 'KPN2', 'KPN3', 'KPN4', 'KPN9', 'KPNA' },
+{ 'Others', 'KPN5', 'KPN6', 'KPN7', 'KPN8', 'KPNB', 'KPNC' },
+}
+for _, row in ipairs(rows) do
+toggle(box, row[2], row[1] .. ': Name', false)
+input(box, row[3], row[1] .. ' Name Value', 'Nosniy')
+toggle(box, row[4], row[1] .. ': Display Name', false)
+input(box, row[5], row[1] .. ' Display Value', 'Nosniy')
+toggle(box, row[6], row[1] .. ': Avatar', false, 'Swaps thumbnails of the matching user id for this user id.')
+input(box, row[7], row[1] .. ' Avatar User ID', '20349956')
+end
+end)
+
+safeGroup(tab, 'R', 'Spoofer: Own Profile', function(box)
+box:AddLabel('Served through the game player-data proxy. Open your profile or shop to see them.', true)
+local rows = {
+{ 'KPS1', 'KPS2', 'Event Currency', '9999' },
+{ 'KPS3', 'KPS4', 'Weapon Keys', '999' },
+{ 'KPS5', 'KPS6', 'Level', '999' },
+{ 'KPS7', 'KPS8', 'Casual Wins', '99999' },
+{ 'KPS9', 'KPSA', 'Ranked Wins', '9999' },
+{ 'KPSB', 'KPSC', 'Casual Win %', '100' },
+{ 'KPSD', 'KPSE', 'Ranked Win %', '100' },
+{ 'KPSF', 'KPSG', 'Ranked ELO', '3600' },
+{ 'KPSH', 'KPSI', 'Favorite Map', 'Arena' },
+}
+for _, row in ipairs(rows) do
+local control = toggle(box, row[1], row[3], false)
+local value = input(box, row[2], row[3] .. ' Value', row[4])
+local refresh = GuardRivalsCallback('Extras_DataRefresh', P.RefreshData)
+control:OnChanged(refresh)
+value:OnChanged(refresh)
+end
+end)
+end
+
+-- ---------------------------------------------------------------- UI Settings tab (config transfer)
+P.BuildConfigUi = function(tab)
+tab = tab or P.MiscTab
+if not tab then
+return
+end
+safeGroup(tab, 'R', 'Config Transfer', function(box)
+box:AddButton({
+Text = 'Export Config To Clipboard',
+Func = GuardRivalsCallback('Extras_Export', P.ExportConfig),
+})
+input(box, 'KPZ1', 'Paste Config', '', 'paste an exported config here')
+box:AddButton({
+Text = 'Import Pasted Config',
+Func = GuardRivalsCallback('Extras_Import', function()
+P.ImportConfig(Options.KPZ1 and Options.KPZ1.Value)
+end),
+})
+end)
+end
+end, function(err)
+RivalsRuntimeBridge.Extras.UiError = tostring(err)
+task.defer(function()
+pcall(ReportRivalsRuntimeIssue, 'extras_ui_load', tostring(err))
+end)
+return err
+end)
+
 RivalsRuntimeBridge.EspExtras = {
 Fonts = { UI = 0, System = 1, Plex = 2, Monospace = 3 },
 Surrounds = {
@@ -29697,6 +31716,7 @@ end
 return math.max(math.round(size), 8)
 end
 local function UpdateESP(deltaTime)
+RivalsRuntimeBridge.Extras.EspStep(deltaTime)
 local settings = EspRenderSettings
 local espEnabled = settings.Enabled
 if not espEnabled then
@@ -29909,7 +31929,7 @@ Height = boxHeight,
 CenterX = screenPos.X,
 CenterY = screenPos.Y,
 }
-if showBox then
+if showBox and not RivalsRuntimeBridge.Extras.SuppressCornerBox(isTeammate) then
 RivalsRuntimeBridge.ESPClassic.DrawBox(entry, renderBounds, currentColor, uiScale)
 else
 RivalsRuntimeBridge.ESPClassic.HideBox(entry)
@@ -29929,7 +31949,7 @@ entry.nameText.Position = Vector2.new(math.round(renderBounds.CenterX), math.rou
 cursorY = cursorY + nameHeight + cardLayout.BarTopGap
 end
 local healthRatio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-local healthColor = GetHealthBarColor(healthRatio)
+local healthColor = RivalsRuntimeBridge.Extras.HealthColor(healthRatio, GetHealthBarColor(healthRatio))
 local barWidth = horizontalBarWidth
 local barX = renderBounds.CenterX - (barWidth * 0.5)
 local barY = cursorY + cardLayout.HorizontalBarOffsetY
@@ -30014,7 +32034,7 @@ fillY,
 math.max(railWidth - (barInset * 2), 1),
 fillHeight,
 0,
-RivalsRuntimeBridge.ESPClassic.GetReactiveBarColor(entry.displayHealthRatio),
+RivalsRuntimeBridge.Extras.HealthColor(entry.displayHealthRatio, RivalsRuntimeBridge.ESPClassic.GetReactiveBarColor(entry.displayHealthRatio)),
 1
 )
 else
@@ -30050,13 +32070,13 @@ end
 if hasDistance then
 entry.distanceText.Position = Vector2.new(math.round(renderBounds.CenterX), math.round(infoStartY))
 end
-local statusValue = showStatus and RivalsRuntimeBridge.ESPClassic.BuildStatusText(player, settings, entry) or ''
+local statusValue = RivalsRuntimeBridge.Extras.FlagText(showStatus and RivalsRuntimeBridge.ESPClassic.BuildStatusText(player, settings, entry) or '')
 if statusValue ~= '' then
 local statusText = RivalsRuntimeBridge.ESPClassic.EnsureStatusText(entry)
-local statusSize = math.max(math.round(12 * uiScale), 8)
-SetDrawingTextState(statusText, true, statusValue, statusSize, false, PLAYER_CARD_THEME.BarTextColor, textFont)
+local statusSize = RivalsRuntimeBridge.Extras.FlagSize(math.max(math.round(12 * uiScale), 8))
+SetDrawingTextState(statusText, true, statusValue, statusSize, false, PLAYER_CARD_THEME.BarTextColor, RivalsRuntimeBridge.Extras.FlagFont(textFont))
 statusText.Position = Vector2.new(
-math.round(renderBounds.MaxX + statusGap),
+math.round(renderBounds.MaxX + statusGap + RivalsRuntimeBridge.Extras.StatusXOffset(isTeammate)),
 math.round(renderBounds.MinY)
 )
 elseif entry.statusText then
@@ -30293,7 +32313,6 @@ local BuildRivalsRagebotUi = nil
 local BuildRivalsCosmeticsUi = nil
 local BuildRivalsPickupUi = nil
 local BuildRivalsMiscUi = nil
-local BuildRivalsDebugUi = nil
 local BuildRivalsUi = nil
 local RivalsRagebot = {
 RespawnRequestInterval = 1,
@@ -34784,6 +36803,12 @@ end
 RivalsCosmeticsState.NativeFavoritesSeeded = true
 end
 function RivalsCosmetics.ResolveNativeDataField(fieldName, originalValue)
+do
+local extrasValue = RivalsRuntimeBridge.Extras.DataField(fieldName)
+if extrasValue ~= nil then
+return extrasValue
+end
+end
 if not RivalsCosmetics.IsEnabled() then
 return originalValue
 end
@@ -35174,6 +37199,7 @@ Proxy = proxy,
 }
 return true
 end
+RivalsRuntimeBridge.Extras.CosmeticsRef = RivalsCosmetics
 function RivalsCosmetics.ResolvePlayerDataGetWeaponDataFunction()
 local playerDataController = RivalsCosmetics.ResolvePlayerDataController()
 local metatable = type(playerDataController) == 'table' and getmetatable(playerDataController) or nil
@@ -39474,6 +41500,7 @@ Tooltip = 'Players at this distance use the normal font size.',
 DepEspDistanceScaling:SetupDependencies({{ Toggles.PX9T2, true }})
 local P1S4 = P1:AddRightGroupbox('Live Preview')
 RivalsRuntimeBridge.BuildEspPreview(P1S4)
+RivalsRuntimeBridge.Extras.BuildEspUi(P1)
 end
 ;(function()
 local RivalsAntihit = {} do
@@ -39983,6 +42010,7 @@ Text = 'Health Lead',
 Default = true,
 Tooltip = 'Dodges faster when you are behind on health and calms down when you are well ahead.',
 })
+RivalsRuntimeBridge.Extras.BuildCombatUi(P2)
 return P2
 end
 BuildRivalsModsUi = function(CombatTab)
@@ -40282,6 +42310,13 @@ Text = 'Notification',
 Default = false,
 Tooltip = 'Shows who you hit and for how much.',
 })
+local HitTextSettings = HitFeedbackGroup:AddDependencyBox()
+HitTextSettings:AddInput('KPF2', {
+Text = 'Notification Text', Default = '', Placeholder = 'Hit %DNAME% (%NAME%) for %DMG% in %PART%',
+AllowEmpty = true, EmptyReset = '',
+Tooltip = 'Leave empty for the default text. Tokens: %NAME% %DNAME% %DMG% %PART%',
+})
+HitTextSettings:SetupDependencies({{ Toggles.PX4T2, true }})
 local KillFeedbackGroup = VisualsTab:AddRightGroupbox('Kill Feedback')
 local killFeedbackToggle = KillFeedbackGroup:AddToggle('P1S16T1', {
 Text = 'Kill Feedback',
@@ -40351,6 +42386,13 @@ Text = 'Notification',
 Default = false,
 Tooltip = 'Shows who you eliminated.',
 })
+local KillTextSettings = KillFeedbackGroup:AddDependencyBox()
+KillTextSettings:AddInput('KPF4', {
+Text = 'Notification Text', Default = '', Placeholder = 'Eliminated %DNAME% (%NAME%)',
+AllowEmpty = true, EmptyReset = '',
+Tooltip = 'Leave empty for the default text. Tokens: %NAME% %DNAME%',
+})
+KillTextSettings:SetupDependencies({{ Toggles.PX5T2, true }})
 local CustomSoundsGroup = VisualsTab:AddLeftGroupbox('Custom Sounds')
 CustomSoundsGroup:AddButton({
 Text = 'Manage Custom Sounds',
@@ -41213,6 +43255,7 @@ Default = '', Text = 'Thunder Sound ID', AllowEmpty = true, EmptyReset = '', Fin
 Tooltip = 'Leave empty to use the default thunder sound.',
 }))
 LightningSettings:SetupDependencies({{ Toggles.P1S29T1, true }})
+RivalsRuntimeBridge.Extras.BuildVisualsUi(CrosshairTab)
 end
 BuildRivalsRagebotUi = function(AutomationTab)
 local function cfg(k, v)
@@ -42492,128 +44535,8 @@ Options.P10S2C1:OnChanged(GuardRivalsCallback('StaffDetector_ColorChanged', Staf
 Library:OnUnload(GuardRivalsCallback('StaffDetector_Unload', function()
 StaffDetector.Destroy(true)
 end))
+RivalsRuntimeBridge.Extras.BuildMiscUi(P10)
 return P10
-end
-BuildRivalsDebugUi = function(Window)
-if IS_OBFUSCATED then
-return
-end
-local P9 = Window:AddTab('Debug', 'bug')
-local P9S2 = P9:AddRightGroupbox('Silent Debug')
-P9S2:AddToggle('P2S1T6', {
-Text = 'Status Notifications',
-Default = false,
-Tooltip = 'Shows live aim-assist status updates through the script notifier.',
-})
-P9S2:AddToggle('P9S2T1', {
-Text = 'Debug Silent',
-Default = false,
-Tooltip = 'Enables verbose runtime status notifications and exposes silent-mode experimental checks.',
-})
-local Dep = P9S2:AddDependencyBox()
-Dep:AddToggle('P9S2T2', {
-Text = 'Use Reload Cooldown',
-Default = true,
-Tooltip = 'Blocks silent snap-assist while real held fire is reloading.',
-})
-Dep:AddToggle('P9S2T3', {
-Text = 'Use Shoot Cooldown',
-Default = true,
-Tooltip = 'Treats live _shoot_cooldown as an active silent hold reason.',
-})
-Dep:AddToggle('P9S2T4', {
-Text = 'Use Last Shot',
-Default = true,
-Tooltip = 'Tracks _last_shot changes as a silent hold/diagnostic signal.',
-})
-Dep:AddToggle('P9S2T5', {
-Text = 'Use Burst Count',
-Default = true,
-Tooltip = 'Treats _burst_count as an active silent hold reason.',
-})
-Dep:AddToggle('P9S2T6', {
-Text = 'Use Queue Pending',
-Default = true,
-Tooltip = 'Treats _is_input_queueing as an active silent hold reason.',
-})
-Dep:AddToggle('P9S2T7', {
-Text = 'Use InputSpamming Flag',
-Default = true,
-Tooltip = 'Reads Info.InputSpammingEnabled.StartShooting when evaluating queue behavior.',
-})
-Dep:AddToggle('P9S2T8', {
-Text = 'Use ShootCooldown Info',
-Default = true,
-Tooltip = 'Uses Info.ShootCooldown when deriving the silent hold window.',
-})
-Dep:AddToggle('P9S2T9', {
-Text = 'Use ShootBurst Info',
-Default = true,
-Tooltip = 'Uses Info.ShootBurst when deciding whether burst weapons should stay latched.',
-})
-Dep:AddToggle('P9S2T10', {
-Text = 'Use ShootBurstCooldown Info',
-Default = true,
-Tooltip = 'Uses Info.ShootBurstCooldown when deriving the silent hold window.',
-})
-Dep:AddToggle('P9S2T11', {
-Text = 'Use QuickShotCooldown Info',
-Default = true,
-Tooltip = 'Uses Info.QuickShotCooldown when deriving the silent hold window.',
-})
-Dep:AddToggle('P9S2T12', {
-Text = 'Use AimScopePercent',
-Default = false,
-Tooltip = 'Adds Info.AimScopePercent to silent runtime reporting so you can see if scoped weapons behave differently.',
-})
-Dep:AddToggle('P9S2T13', {
-Text = 'Use ToggleAimEnabled',
-Default = false,
-Tooltip = 'Adds ToggleAimEnabled to silent runtime reporting so you can compare ADS-capable items.',
-})
-Dep:AddToggle('P9S2T14', {
-Text = 'Use Shot Signal',
-Default = true,
-Tooltip = 'Tracks item.Shot as a silent hold/diagnostic signal.',
-})
-Dep:AddToggle('P9S2T15', {
-Text = 'Use ProjectileShot Signal',
-Default = true,
-Tooltip = 'Tracks item.ProjectileShot as a silent hold/diagnostic signal.',
-})
-Dep:AddToggle('P9S2T18', {
-Text = 'Use Charging Flag',
-Default = true,
-Tooltip = 'Treats _is_charging as an active silent hold reason and prevents Bow-style charge from being misread as a reload block.',
-})
-Dep:AddToggle('P9S2T16', {
-Text = 'Use Using Flag',
-Default = true,
-Tooltip = 'Treats _is_using as an active silent hold reason for use-style items.',
-})
-Dep:AddToggle('P9S2T17', {
-Text = 'Use Throwing Flag',
-Default = true,
-Tooltip = 'Treats _is_throwing as an active silent hold reason for throwable items.',
-})
-Dep:SetupDependencies({{ Toggles.P9S2T1, true }})
-P9S2:AddToggle('P9S2T19', {
-Text = 'Show Target Validity Diagnostic',
-Default = false,
-Tooltip = 'Persistent notification showing which target-validity gates are firing. Counts last-1s rejections per gate (subject_invalid, not_alive, katana_deflect, no_camera, no_part_resolved, not_visible, out_of_range, off_screen, out_of_fov, team_or_self, spawn_shield, riot_shield) plus last 3 rejected targets and last successful lock. Use this to identify which gate is dropping a strafing target.',
-})
-local P9S3 = P9:AddLeftGroupbox('Character Loading')
-P9S3:AddToggle('P9S3T1', {
-Text = 'Character Loading Check',
-Default = false,
-Tooltip = 'Diagnostic toggle. When on, notifies on (1) the moment a feature first becomes ready to act, and (2) every time the readiness gate refuses a write (auto-farm pivot, silent aim, triggerbot, camera prime, fighter-wait timeout). Throttled to one notification per distinct message every 2 seconds. Off by default.',
-})
-local P9S4 = P9:AddLeftGroupbox('Experimental')
-P9S4:AddToggle('P8S4T3', {
-Text = 'OOB Bait Mode',
-Default = false,
-Tooltip = 'When an opposing player is detected teleporting, retreat to a deep OOB corner and hold there. Auto-disengages when no cheater is detected. Work in progress - lives here until it is ready for release.',
-})
 end
 BuildRivalsUi = function(Window)
 BuildRivalsEspUi(Window)
@@ -42625,7 +44548,6 @@ BuildRivalsRagebotUi(AutomationTab)
 BuildRivalsVisualsUi(Window)
 local MiscTab = BuildRivalsMiscUi(Window)
 BuildRivalsCosmeticsUi(MiscTab)
-BuildRivalsDebugUi(Window)
 end
 local RivalsRuntime = {}
 function RivalsRuntime.ResetState()
@@ -43125,7 +45047,6 @@ local SharedConfigDefaultObjects = {
 { idx = 'P2S1S11', type = 'Slider', value = 12 },
 { idx = 'P2S1S12', type = 'Slider', value = 30 },
 { idx = 'P2S1S2', type = 'Slider', value = 282 },
-{ idx = 'P2S1T6', type = 'Toggle', value = false },
 { idx = 'P2S1T7K', type = 'KeyPicker', mode = 'Always', key = 'Unknown', modifiers = {} },
 { idx = 'P2S1S7', type = 'Slider', value = 0 },
 { idx = 'P2S1T8', type = 'Toggle', value = true },
@@ -43213,7 +45134,6 @@ RPG = true,
 { idx = 'P8S1T2', type = 'Toggle', value = true },
 { idx = 'P8S8T1', type = 'Toggle', value = false },
 { idx = 'P8S8T2', type = 'Toggle', value = false },
-{ idx = 'P8S4T3', type = 'Toggle', value = false },
 { idx = 'P8S4T1K', type = 'KeyPicker', mode = 'Always', key = 'Unknown', modifiers = {} },
 { idx = 'P8S4T4', type = 'Toggle', value = false },
 { idx = 'P8S4S1', type = 'Slider', value = 0.15 },
@@ -43241,26 +45161,6 @@ RPG = true,
 { idx = 'P8S5T5', type = 'Toggle', value = false },
 { idx = 'P8S5D9', type = 'Dropdown', multi = true, value = {} },
 { idx = 'P8S6D1', type = 'Dropdown', value = '1v1' },
-{ idx = 'P9S2T1', type = 'Toggle', value = false },
-{ idx = 'P9S2T2', type = 'Toggle', value = true },
-{ idx = 'P9S2T3', type = 'Toggle', value = true },
-{ idx = 'P9S2T4', type = 'Toggle', value = true },
-{ idx = 'P9S2T5', type = 'Toggle', value = true },
-{ idx = 'P9S2T6', type = 'Toggle', value = true },
-{ idx = 'P9S2T7', type = 'Toggle', value = true },
-{ idx = 'P9S2T8', type = 'Toggle', value = true },
-{ idx = 'P9S2T9', type = 'Toggle', value = true },
-{ idx = 'P9S2T10', type = 'Toggle', value = true },
-{ idx = 'P9S2T11', type = 'Toggle', value = true },
-{ idx = 'P9S2T12', type = 'Toggle', value = false },
-{ idx = 'P9S2T13', type = 'Toggle', value = false },
-{ idx = 'P9S2T14', type = 'Toggle', value = true },
-{ idx = 'P9S2T15', type = 'Toggle', value = true },
-{ idx = 'P9S2T16', type = 'Toggle', value = true },
-{ idx = 'P9S2T17', type = 'Toggle', value = true },
-{ idx = 'P9S2T18', type = 'Toggle', value = true },
-{ idx = 'P9S2T19', type = 'Toggle', value = false },
-{ idx = 'P9S3T1', type = 'Toggle', value = false },
 { idx = 'P10S3T1', type = 'Toggle', value = false },
 { idx = 'P10S3T1K', type = 'KeyPicker', mode = 'Always', key = 'Unknown', modifiers = {} },
 { idx = 'P10S3S1', type = 'Slider', value = 2 },
@@ -43465,6 +45365,12 @@ ReconcileLoadedState()
 end
 end,
 })
+RivalsRuntimeBridge.Extras.Reconcile = function()
+if ReconcileLoadedState then
+ReconcileLoadedState()
+end
+end
+RivalsRuntimeBridge.Extras.BuildConfigUi(Library.Tabs and Library.Tabs['UI Settings'])
 local initialRivalsConfigName = (SharedUI:should_auto_load_config() and SharedUI:resolve_load_config_name()) or 'RIVALS Default'
 RivalsRuntimeBridge.SetRivalsCosmeticsConfigName(initialRivalsConfigName)
 RivalsRuntimeBridge.SetAutoLoadoutConfigName(initialRivalsConfigName)
