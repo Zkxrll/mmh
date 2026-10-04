@@ -31420,16 +31420,21 @@ P.Report('ui_' .. title, err)
 end
 end
 
--- A tabbed box: one card with a row of tabs, each holding its own controls (a "dropdown inside a dropdown").
-local function safeTabs(tab, side, tabs)
-local ok, err = pcall(function()
-local tabbox = side == 'L' and tab:AddLeftTabbox() or tab:AddRightTabbox()
-for _, definition in ipairs(tabs) do
-definition[2](tabbox:AddTab(definition[1]))
+-- A "Sections" multi-select: each section's controls sit in a hidden block that appears when its name is
+-- ticked, so a long box stays one short row until you need a part of it.
+local function sections(box, id, defs, default)
+local names = {}
+for _, definition in ipairs(defs) do
+names[#names + 1] = definition[1]
 end
-end)
-if not ok then
-P.Report('ui_tabs_' .. tostring(tabs[1] and tabs[1][1]), err)
+box:AddDropdown(id, {
+Text = 'Sections', Values = names, Default = default or {}, Multi = true,
+Tooltip = 'Tick the sections you want to see and edit.',
+})
+for _, definition in ipairs(defs) do
+local block = box:AddDependencyBox()
+definition[2](block)
+block:SetupDependencies({{ Options[id], definition[1] }})
 end
 end
 
@@ -31462,8 +31467,7 @@ end
 P.BuildCombatUi = function(tab)
 safeGroup(tab, 'L', 'Silent Aim Rules', function(box)
 toggle(box, 'KPA0', 'Enable Rules', false, 'Applies while Aimbot Mode is Silent. Off keeps the original behaviour.')
-end)
-safeTabs(tab, 'L', {
+sections(box, 'KPASEC', {
 { 'Activation', function(t)
 toggle(t, 'KPA1', 'Not Reloading', true, 'Silent shots are not redirected while reloading.')
 toggle(t, 'KPA2', 'Scoped In', false, 'Only redirect shots while fully scoped in.')
@@ -31484,6 +31488,7 @@ slider(t, 'KPAC', 'Surface Reduction', 50, 0, 95, 0, '%', 'Shrinks the hitbox us
 toggle(t, 'KPAD', 'Preserve Depth', false, 'Keeps full size along the viewing direction when shrinking.')
 end },
 })
+end)
 
 safeGroup(tab, 'R', 'Triggerbot Rules', function(box)
 toggle(box, 'KPB0', 'Enable Rules', false, 'Extra conditions for the triggerbot.')
@@ -31515,9 +31520,8 @@ P.BuildEspUi = function(tab)
 local function scope(letter, title, side)
 local p = 'KPE' .. letter
 safeGroup(tab, side, title, function(box)
-toggle(box, p .. '0', 'Enable ' .. title, false, 'Master switch for the extras in the tabs below.')
-end)
-safeTabs(tab, side, {
+toggle(box, p .. '0', 'Enable ' .. title, false, 'Master switch for the extras below.')
+sections(box, p .. 'SEC', {
 { 'Skeleton', function(t)
 toggle(t, p .. 'SK', 'Skeleton', false)
 color(t, p .. 'SKC', 'Skeleton Color', Color3.fromRGB(255, 255, 255))
@@ -31559,11 +31563,13 @@ color(t, p .. 'ABH', 'Ammo Color 2', Color3.fromRGB(255, 70, 70))
 dropdown(t, p .. 'ABM', 'Ammo Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive')
 end },
 })
+end)
 end
 scope('E', 'Enemy Extras', 'L')
 scope('T', 'Teammate Extras', 'R')
 
-safeTabs(tab, 'L', {
+safeGroup(tab, 'L', 'ESP Style', function(box)
+sections(box, 'KPSTY', {
 { 'Layout', function(t)
 dropdown(t, 'KPEBF', 'Box Fit', { 'Dynamic', 'Static' }, 'Dynamic', 'Dynamic follows the hitboxes, Static is a fixed ratio.')
 slider(t, 'KPEMD', 'Max Distance', 1000, 50, 1500, 0, ' studs')
@@ -31581,6 +31587,7 @@ color(t, 'KPH2', 'Gradient Low', Color3.fromRGB(255, 60, 60))
 color(t, 'KPH3', 'Gradient High', Color3.fromRGB(60, 255, 60))
 end },
 })
+end)
 end
 
 -- ---------------------------------------------------------------- Crosshair tab
@@ -31634,12 +31641,12 @@ toggle(t, ids[5], label .. ': Avatar', false, 'Swaps thumbnails of the matching 
 input(t, ids[6], label .. ' Avatar User ID', '20349956')
 end
 safeGroup(tab, 'L', 'Spoofer: Names & Avatar', function(box)
-box:AddLabel('Rewrites text and avatar thumbnails on your screen only. Pick You or Others below.', true)
-end)
-safeTabs(tab, 'L', {
+box:AddLabel('Rewrites text and avatar thumbnails on your screen only.', true)
+sections(box, 'KPNSEC', {
 { 'You', function(t) nameTab(t, 'You', { 'KPN1', 'KPN2', 'KPN3', 'KPN4', 'KPN9', 'KPNA' }) end },
 { 'Others', function(t) nameTab(t, 'Others', { 'KPN5', 'KPN6', 'KPN7', 'KPN8', 'KPNB', 'KPNC' }) end },
 })
+end)
 
 local function profileRows(t, rows)
 for _, row in ipairs(rows) do
@@ -31652,8 +31659,7 @@ end
 end
 safeGroup(tab, 'R', 'Spoofer: Own Profile', function(box)
 box:AddLabel('Served through the game player-data proxy. Open your profile or shop to see them.', true)
-end)
-safeTabs(tab, 'R', {
+sections(box, 'KPSSEC', {
 { 'Economy', function(t)
 profileRows(t, {
 { 'KPS1', 'KPS2', 'Event Currency', '9999' },
@@ -31672,6 +31678,7 @@ profileRows(t, {
 })
 end },
 })
+end)
 end
 
 -- ---------------------------------------------------------------- UI Settings tab (config transfer)
@@ -31701,6 +31708,9 @@ local LONG_GROUPS = {
 ['Custom Crosshair'] = true, ['Crosshair Text'] = true, ['Crosshair Animation'] = true,
 ['Camera View'] = true, ['Bullet Tracers'] = true, ['Movement Recorder'] = true,
 ['Auto Loadout & Ban'] = true,
+-- the new extras: one short header each until opened
+['Silent Aim Rules'] = true, ['Enemy Extras'] = true, ['Teammate Extras'] = true, ['ESP Style'] = true,
+['Spoofer: Names & Avatar'] = true, ['Spoofer: Own Profile'] = true,
 }
 P.CollapseLongGroups = function()
 for _, tab in pairs(Library.Tabs or {}) do
@@ -42294,11 +42304,14 @@ Default = false,
 Tooltip = 'Plays effects when you damage someone: sound and chams.',
 })
 hitFeedbackToggle:OnChanged(GuardRivalsCallback('CombatFeedback_HitToggle', feedback.RefreshBinding))
-local HitTabs = VisualsTab:AddLeftTabbox()
-local HitSoundTab = HitTabs:AddTab('Sound')
-local HitChamsTab = HitTabs:AddTab('Chams')
-local HitFlashTab = HitTabs:AddTab('Flash')
-local HitTextTab = HitTabs:AddTab('Text')
+local HitSections = HitFeedbackGroup:AddDropdown('KPHSEC', {
+Text = 'Sections', Values = {'Sound', 'Chams', 'Flash', 'Text'}, Default = {'Sound'}, Multi = true,
+Tooltip = 'Tick the parts of the feedback you want to see and edit.',
+})
+local HitSoundTab = HitFeedbackGroup:AddDependencyBox()
+local HitChamsTab = HitFeedbackGroup:AddDependencyBox()
+local HitFlashTab = HitFeedbackGroup:AddDependencyBox()
+local HitTextTab = HitFeedbackGroup:AddDependencyBox()
 HitSoundTab:AddToggle('P1S15T2', {
 Text = 'Play Sound',
 Default = false,
@@ -42335,6 +42348,7 @@ Text = 'Disable Game Sound',
 Default = false,
 Tooltip = "Mutes the game's own hitmarker sound so only your custom hit sound plays.",
 }):OnChanged(GuardRivalsCallback('NativeRemovals_GameHitsound', RivalsRuntimeBridge.NativeRemovals.RefreshAll))
+HitSoundTab:SetupDependencies({{ Options.KPHSEC, 'Sound' }})
 HitChamsTab:AddToggle('P1S15T4', {
 Text = 'Chams',
 Default = false,
@@ -42356,6 +42370,7 @@ Multi = false,
 Text = 'Cham Material',
 })
 HitChamsSettings:SetupDependencies({{Toggles.P1S15T4, true}})
+HitChamsTab:SetupDependencies({{ Options.KPHSEC, 'Chams' }})
 HitFlashTab:AddToggle('PX4T1', {
 Text = 'Screen Flash',
 Default = false,
@@ -42373,6 +42388,7 @@ HitFlashSettings:AddSlider('PX4S2', {
 Text = 'Flash Duration', Default = 0.15, Min = 0.05, Max = 1, Rounding = 2, Compact = true,
 })
 HitFlashSettings:SetupDependencies({{Toggles.PX4T1, true}})
+HitFlashTab:SetupDependencies({{ Options.KPHSEC, 'Flash' }})
 HitTextTab:AddToggle('PX4T2', {
 Text = 'Notification',
 Default = false,
@@ -42385,6 +42401,7 @@ AllowEmpty = true, EmptyReset = '',
 Tooltip = 'Leave empty for the default text. Tokens: %NAME% %DNAME% %DMG% %PART%',
 })
 HitTextSettings:SetupDependencies({{ Toggles.PX4T2, true }})
+HitTextTab:SetupDependencies({{ Options.KPHSEC, 'Text' }})
 local KillFeedbackGroup = VisualsTab:AddRightGroupbox('Kill Feedback')
 local killFeedbackToggle = KillFeedbackGroup:AddToggle('P1S16T1', {
 Text = 'Kill Feedback',
@@ -42392,11 +42409,14 @@ Default = false,
 Tooltip = 'Plays effects when you eliminate someone: sound and chams.',
 })
 killFeedbackToggle:OnChanged(GuardRivalsCallback('CombatFeedback_KillToggle', feedback.RefreshBinding))
-local KillTabs = VisualsTab:AddRightTabbox()
-local KillSoundTab = KillTabs:AddTab('Sound')
-local KillChamsTab = KillTabs:AddTab('Chams')
-local KillFlashTab = KillTabs:AddTab('Flash')
-local KillTextTab = KillTabs:AddTab('Text')
+local KillSections = KillFeedbackGroup:AddDropdown('KPKSEC', {
+Text = 'Sections', Values = {'Sound', 'Chams', 'Flash', 'Text'}, Default = {'Sound'}, Multi = true,
+Tooltip = 'Tick the parts of the feedback you want to see and edit.',
+})
+local KillSoundTab = KillFeedbackGroup:AddDependencyBox()
+local KillChamsTab = KillFeedbackGroup:AddDependencyBox()
+local KillFlashTab = KillFeedbackGroup:AddDependencyBox()
+local KillTextTab = KillFeedbackGroup:AddDependencyBox()
 KillSoundTab:AddToggle('P1S16T2', {
 Text = 'Play Sound',
 Default = false,
@@ -42416,6 +42436,7 @@ KillSoundSettings:AddSlider('P1S16S2', {
 Text = 'Pitch', Default = 1, Min = 0.1, Max = 3, Rounding = 1, Compact = true,
 })
 KillSoundSettings:SetupDependencies({{Toggles.P1S16T2, true}})
+KillSoundTab:SetupDependencies({{ Options.KPKSEC, 'Sound' }})
 KillChamsTab:AddToggle('P1S16T3', {
 Text = 'Chams',
 Default = false,
@@ -42437,6 +42458,7 @@ Multi = false,
 Text = 'Cham Material',
 })
 KillChamsSettings:SetupDependencies({{Toggles.P1S16T3, true}})
+KillChamsTab:SetupDependencies({{ Options.KPKSEC, 'Chams' }})
 KillFlashTab:AddToggle('PX5T1', {
 Text = 'Screen Flash',
 Default = false,
@@ -42454,6 +42476,7 @@ KillFlashSettings:AddSlider('PX5S2', {
 Text = 'Flash Duration', Default = 0.3, Min = 0.05, Max = 1.5, Rounding = 2, Compact = true,
 })
 KillFlashSettings:SetupDependencies({{Toggles.PX5T1, true}})
+KillFlashTab:SetupDependencies({{ Options.KPKSEC, 'Flash' }})
 KillTextTab:AddToggle('PX5T2', {
 Text = 'Notification',
 Default = false,
@@ -42466,6 +42489,7 @@ AllowEmpty = true, EmptyReset = '',
 Tooltip = 'Leave empty for the default text. Tokens: %NAME% %DNAME%',
 })
 KillTextSettings:SetupDependencies({{ Toggles.PX5T2, true }})
+KillTextTab:SetupDependencies({{ Options.KPKSEC, 'Text' }})
 local CustomSoundsGroup = VisualsTab:AddLeftGroupbox('Custom Sounds')
 CustomSoundsGroup:AddButton({
 Text = 'Manage Custom Sounds',
