@@ -29815,6 +29815,7 @@ BuildEspUi = function() end,
 BuildVisualsUi = function() end,
 BuildMiscUi = function() end,
 BuildConfigUi = function() end,
+CollapseLongGroups = function() end,
 Destroy = function() end,
 Reconcile = function() end,
 }
@@ -31419,6 +31420,19 @@ P.Report('ui_' .. title, err)
 end
 end
 
+-- A tabbed box: one card with a row of tabs, each holding its own controls (a "dropdown inside a dropdown").
+local function safeTabs(tab, side, tabs)
+local ok, err = pcall(function()
+local tabbox = side == 'L' and tab:AddLeftTabbox() or tab:AddRightTabbox()
+for _, definition in ipairs(tabs) do
+definition[2](tabbox:AddTab(definition[1]))
+end
+end)
+if not ok then
+P.Report('ui_tabs_' .. tostring(tabs[1] and tabs[1][1]), err)
+end
+end
+
 local function toggle(box, id, text, default, tip)
 return box:AddToggle(id, { Text = text, Default = default, Tooltip = tip })
 end
@@ -31448,20 +31462,28 @@ end
 P.BuildCombatUi = function(tab)
 safeGroup(tab, 'L', 'Silent Aim Rules', function(box)
 toggle(box, 'KPA0', 'Enable Rules', false, 'Applies while Aimbot Mode is Silent. Off keeps the original behaviour.')
-toggle(box, 'KPA1', 'Not Reloading', true, 'Silent shots are not redirected while reloading.')
-toggle(box, 'KPA2', 'Scoped In', false, 'Only redirect shots while fully scoped in.')
-toggle(box, 'KPA3', 'Target Visible', true, 'Target must be visible.')
-toggle(box, 'KPA4', 'Target Vulnerable', true, 'Skips targets with spawn protection.')
-toggle(box, 'KPA5', 'Target Not Deflecting', true, 'Skips targets with an active Katana deflect.')
-toggle(box, 'KPA6', 'Target Not Shielded', true, 'Skips targets whose Riot Shield blocks the shot.')
-toggle(box, 'KPA7', 'Target Within FOV', true, 'Keeps the FOV circle binding even when Ignore FOV is on.')
-multi(box, 'KPA8', 'Allowed Hitboxes', { 'Head', 'Body' }, { 'Head', 'Body' }, 'Hitboxes silent aim may use.')
-dropdown(box, 'KPA9', 'Hitbox Selection', { 'Closest To Crosshair', 'Random' }, 'Closest To Crosshair', 'Replaces Aim Part while the rules are on.')
-slider(box, 'KPAA', 'Head %', 50, 0, 100, 0, '%', 'Random selection only: chance of picking the head first.')
-dropdown(box, 'KPAB', 'Aim Point', { 'Center', 'Surface' }, 'Center', 'Surface aims at the point of the hitbox nearest your crosshair.')
-slider(box, 'KPAC', 'Surface Reduction', 50, 0, 95, 0, '%', 'Shrinks the hitbox used for the Surface point.')
-toggle(box, 'KPAD', 'Preserve Depth', false, 'Keeps full size along the viewing direction when shrinking.')
 end)
+safeTabs(tab, 'L', {
+{ 'Activation', function(t)
+toggle(t, 'KPA1', 'Not Reloading', true, 'Silent shots are not redirected while reloading.')
+toggle(t, 'KPA2', 'Scoped In', false, 'Only redirect shots while fully scoped in.')
+end },
+{ 'Targets', function(t)
+toggle(t, 'KPA3', 'Target Visible', true, 'Target must be visible.')
+toggle(t, 'KPA4', 'Target Vulnerable', true, 'Skips targets with spawn protection.')
+toggle(t, 'KPA5', 'Target Not Deflecting', true, 'Skips targets with an active Katana deflect.')
+toggle(t, 'KPA6', 'Target Not Shielded', true, 'Skips targets whose Riot Shield blocks the shot.')
+toggle(t, 'KPA7', 'Target Within FOV', true, 'Keeps the FOV circle binding even when Ignore FOV is on.')
+end },
+{ 'Hitbox', function(t)
+multi(t, 'KPA8', 'Allowed Hitboxes', { 'Head', 'Body' }, { 'Head', 'Body' }, 'Hitboxes silent aim may use.')
+dropdown(t, 'KPA9', 'Hitbox Selection', { 'Closest To Crosshair', 'Random' }, 'Closest To Crosshair', 'Replaces Aim Part while the rules are on.')
+slider(t, 'KPAA', 'Head %', 50, 0, 100, 0, '%', 'Random selection only: chance of picking the head first.')
+dropdown(t, 'KPAB', 'Aim Point', { 'Center', 'Surface' }, 'Center', 'Surface aims at the point of the hitbox nearest your crosshair.')
+slider(t, 'KPAC', 'Surface Reduction', 50, 0, 95, 0, '%', 'Shrinks the hitbox used for the Surface point.')
+toggle(t, 'KPAD', 'Preserve Depth', false, 'Keeps full size along the viewing direction when shrinking.')
+end },
+})
 
 safeGroup(tab, 'R', 'Triggerbot Rules', function(box)
 toggle(box, 'KPB0', 'Enable Rules', false, 'Extra conditions for the triggerbot.')
@@ -31490,61 +31512,75 @@ end
 
 -- ---------------------------------------------------------------- ESP tab
 P.BuildEspUi = function(tab)
-local function scope(box, letter, title)
+local function scope(letter, title, side)
 local p = 'KPE' .. letter
-toggle(box, p .. '0', 'Enable ' .. title, false, 'Master switch for the extras below.')
-toggle(box, p .. 'SK', 'Skeleton', false)
-color(box, p .. 'SKC', 'Skeleton Color', Color3.fromRGB(255, 255, 255))
-toggle(box, p .. 'SKG', 'Skeleton Gradient', false, 'Blends to the second color from top to bottom.')
-color(box, p .. 'SKH', 'Skeleton Color 2', Color3.fromRGB(255, 70, 70))
-slider(box, p .. 'SKT', 'Skeleton Thickness', 1, 1, 6, 0)
-toggle(box, p .. 'HM', 'Head Marker', false)
-dropdown(box, p .. 'HMS', 'Head Shape', { 'Circle', 'Cross', 'Diamond' }, 'Circle')
-color(box, p .. 'HMC', 'Head Color', Color3.fromRGB(255, 255, 255))
-toggle(box, p .. 'HMF', 'Head Filled', false)
-toggle(box, p .. 'HMO', 'Head Outline', true)
-slider(box, p .. 'HMR', 'Head Size', 1, 0.2, 4, 1, 'x')
-toggle(box, p .. 'TR', 'Tracer', false)
-color(box, p .. 'TRC', 'Tracer Color', Color3.fromRGB(255, 255, 255))
-toggle(box, p .. 'TRG', 'Tracer Gradient', false)
-color(box, p .. 'TRH', 'Tracer Color 2', Color3.fromRGB(255, 70, 70))
-slider(box, p .. 'TRT', 'Tracer Thickness', 1, 1, 6, 0)
-dropdown(box, p .. 'TRF', 'Tracer From', { 'Bottom', 'Center', 'Top', 'Mouse' }, 'Bottom')
-dropdown(box, p .. 'TRW', 'Tracer To', { 'Feet', 'Head' }, 'Feet')
-toggle(box, p .. 'TRO', 'Tracer Outline', true)
-toggle(box, p .. 'FB', 'Full Box', false, 'Replaces the corner box with a full rectangle.')
-color(box, p .. 'FBC', 'Full Box Color', Color3.fromRGB(255, 255, 255))
-toggle(box, p .. 'FF', 'Filled Box', false)
-color(box, p .. 'FFC', 'Fill Color', Color3.fromRGB(255, 60, 60))
-slider(box, p .. 'FFA', 'Fill Opacity', 0.25, 0, 1, 2)
-toggle(box, p .. 'FFG', 'Fill Gradient', false, 'Blends top to bottom.')
-color(box, p .. 'FFH', 'Fill Color 2', Color3.fromRGB(60, 60, 255))
-toggle(box, p .. 'AB', 'Ammo Bar', false)
-color(box, p .. 'ABC', 'Ammo Color', Color3.fromRGB(80, 160, 255))
-color(box, p .. 'ABH', 'Ammo Color 2', Color3.fromRGB(255, 70, 70))
-dropdown(box, p .. 'ABM', 'Ammo Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive')
+safeGroup(tab, side, title, function(box)
+toggle(box, p .. '0', 'Enable ' .. title, false, 'Master switch for the extras in the tabs below.')
+end)
+safeTabs(tab, side, {
+{ 'Skeleton', function(t)
+toggle(t, p .. 'SK', 'Skeleton', false)
+color(t, p .. 'SKC', 'Skeleton Color', Color3.fromRGB(255, 255, 255))
+toggle(t, p .. 'SKG', 'Skeleton Gradient', false, 'Blends to the second color from top to bottom.')
+color(t, p .. 'SKH', 'Skeleton Color 2', Color3.fromRGB(255, 70, 70))
+slider(t, p .. 'SKT', 'Skeleton Thickness', 1, 1, 6, 0)
+end },
+{ 'Head', function(t)
+toggle(t, p .. 'HM', 'Head Marker', false)
+dropdown(t, p .. 'HMS', 'Head Shape', { 'Circle', 'Cross', 'Diamond' }, 'Circle')
+color(t, p .. 'HMC', 'Head Color', Color3.fromRGB(255, 255, 255))
+toggle(t, p .. 'HMF', 'Head Filled', false)
+toggle(t, p .. 'HMO', 'Head Outline', true)
+slider(t, p .. 'HMR', 'Head Size', 1, 0.2, 4, 1, 'x')
+end },
+{ 'Tracer', function(t)
+toggle(t, p .. 'TR', 'Tracer', false)
+color(t, p .. 'TRC', 'Tracer Color', Color3.fromRGB(255, 255, 255))
+toggle(t, p .. 'TRG', 'Tracer Gradient', false)
+color(t, p .. 'TRH', 'Tracer Color 2', Color3.fromRGB(255, 70, 70))
+slider(t, p .. 'TRT', 'Tracer Thickness', 1, 1, 6, 0)
+dropdown(t, p .. 'TRF', 'Tracer From', { 'Bottom', 'Center', 'Top', 'Mouse' }, 'Bottom')
+dropdown(t, p .. 'TRW', 'Tracer To', { 'Feet', 'Head' }, 'Feet')
+toggle(t, p .. 'TRO', 'Tracer Outline', true)
+end },
+{ 'Box', function(t)
+toggle(t, p .. 'FB', 'Full Box', false, 'Replaces the corner box with a full rectangle.')
+color(t, p .. 'FBC', 'Full Box Color', Color3.fromRGB(255, 255, 255))
+toggle(t, p .. 'FF', 'Filled Box', false)
+color(t, p .. 'FFC', 'Fill Color', Color3.fromRGB(255, 60, 60))
+slider(t, p .. 'FFA', 'Fill Opacity', 0.25, 0, 1, 2)
+toggle(t, p .. 'FFG', 'Fill Gradient', false, 'Blends top to bottom.')
+color(t, p .. 'FFH', 'Fill Color 2', Color3.fromRGB(60, 60, 255))
+end },
+{ 'Ammo', function(t)
+toggle(t, p .. 'AB', 'Ammo Bar', false)
+color(t, p .. 'ABC', 'Ammo Color', Color3.fromRGB(80, 160, 255))
+color(t, p .. 'ABH', 'Ammo Color 2', Color3.fromRGB(255, 70, 70))
+dropdown(t, p .. 'ABM', 'Ammo Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive')
+end },
+})
 end
-safeGroup(tab, 'L', 'Enemy Extras', function(box) scope(box, 'E', 'Enemy Extras') end)
-safeGroup(tab, 'R', 'Teammate Extras', function(box) scope(box, 'T', 'Teammate Extras') end)
+scope('E', 'Enemy Extras', 'L')
+scope('T', 'Teammate Extras', 'R')
 
-safeGroup(tab, 'L', 'Extras Layout', function(box)
-dropdown(box, 'KPEBF', 'Box Fit', { 'Dynamic', 'Static' }, 'Dynamic', 'Dynamic follows the hitboxes, Static is a fixed ratio.')
-slider(box, 'KPEMD', 'Max Distance', 1000, 50, 1500, 0, ' studs')
-end)
-
-safeGroup(tab, 'R', 'Flag Text', function(box)
-dropdown(box, 'KPG1', 'Flag Font', { 'Same As Text', 'UI', 'System', 'Plex', 'Monospace' }, 'Same As Text', 'Font of the rank / win streak / deflecting text.')
-slider(box, 'KPG2', 'Flag Size', 0, 0, 32, 0, ' px', '0 keeps the original size.')
-dropdown(box, 'KPG3', 'Flag Case', { 'Normal', 'UPPER', 'lower' }, 'Normal')
-dropdown(box, 'KPG4', 'Flag Surround', { 'None', '[ ]', '( )', '< >', '- -', '* *' }, 'None')
-end)
-
-safeGroup(tab, 'L', 'Health Bar Colors', function(box)
-dropdown(box, 'KPH0', 'Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive', 'Reactive is the original behaviour.')
-color(box, 'KPH1', 'Solid Color', Color3.fromRGB(60, 255, 60))
-color(box, 'KPH2', 'Gradient Low', Color3.fromRGB(255, 60, 60))
-color(box, 'KPH3', 'Gradient High', Color3.fromRGB(60, 255, 60))
-end)
+safeTabs(tab, 'L', {
+{ 'Layout', function(t)
+dropdown(t, 'KPEBF', 'Box Fit', { 'Dynamic', 'Static' }, 'Dynamic', 'Dynamic follows the hitboxes, Static is a fixed ratio.')
+slider(t, 'KPEMD', 'Max Distance', 1000, 50, 1500, 0, ' studs')
+end },
+{ 'Flags', function(t)
+dropdown(t, 'KPG1', 'Flag Font', { 'Same As Text', 'UI', 'System', 'Plex', 'Monospace' }, 'Same As Text', 'Font of the rank / win streak / deflecting text.')
+slider(t, 'KPG2', 'Flag Size', 0, 0, 32, 0, ' px', '0 keeps the original size.')
+dropdown(t, 'KPG3', 'Flag Case', { 'Normal', 'UPPER', 'lower' }, 'Normal')
+dropdown(t, 'KPG4', 'Flag Surround', { 'None', '[ ]', '( )', '< >', '- -', '* *' }, 'None')
+end },
+{ 'Health', function(t)
+dropdown(t, 'KPH0', 'Color Mode', { 'Reactive', 'Solid', 'Gradient' }, 'Reactive', 'Reactive is the original behaviour.')
+color(t, 'KPH1', 'Solid Color', Color3.fromRGB(60, 255, 60))
+color(t, 'KPH2', 'Gradient Low', Color3.fromRGB(255, 60, 60))
+color(t, 'KPH3', 'Gradient High', Color3.fromRGB(60, 255, 60))
+end },
+})
 end
 
 -- ---------------------------------------------------------------- Crosshair tab
@@ -31589,43 +31625,53 @@ end
 -- ---------------------------------------------------------------- Misc tab (spoofer extras)
 P.BuildMiscUi = function(tab)
 P.MiscTab = tab
-safeGroup(tab, 'L', 'Spoofer: Names & Avatar', function(box)
-box:AddLabel('Rewrites text and avatar thumbnails on your screen only.', true)
-local rows = {
-{ 'You', 'KPN1', 'KPN2', 'KPN3', 'KPN4', 'KPN9', 'KPNA' },
-{ 'Others', 'KPN5', 'KPN6', 'KPN7', 'KPN8', 'KPNB', 'KPNC' },
-}
-for _, row in ipairs(rows) do
-toggle(box, row[2], row[1] .. ': Name', false)
-input(box, row[3], row[1] .. ' Name Value', 'Nosniy')
-toggle(box, row[4], row[1] .. ': Display Name', false)
-input(box, row[5], row[1] .. ' Display Value', 'Nosniy')
-toggle(box, row[6], row[1] .. ': Avatar', false, 'Swaps thumbnails of the matching user id for this user id.')
-input(box, row[7], row[1] .. ' Avatar User ID', '20349956')
+local function nameTab(t, label, ids)
+toggle(t, ids[1], label .. ': Name', false, 'Rewrites this name on your screen only.')
+input(t, ids[2], label .. ' Name Value', 'Nosniy')
+toggle(t, ids[3], label .. ': Display Name', false)
+input(t, ids[4], label .. ' Display Value', 'Nosniy')
+toggle(t, ids[5], label .. ': Avatar', false, 'Swaps thumbnails of the matching user id for this user id.')
+input(t, ids[6], label .. ' Avatar User ID', '20349956')
 end
+safeGroup(tab, 'L', 'Spoofer: Names & Avatar', function(box)
+box:AddLabel('Rewrites text and avatar thumbnails on your screen only. Pick You or Others below.', true)
 end)
+safeTabs(tab, 'L', {
+{ 'You', function(t) nameTab(t, 'You', { 'KPN1', 'KPN2', 'KPN3', 'KPN4', 'KPN9', 'KPNA' }) end },
+{ 'Others', function(t) nameTab(t, 'Others', { 'KPN5', 'KPN6', 'KPN7', 'KPN8', 'KPNB', 'KPNC' }) end },
+})
 
+local function profileRows(t, rows)
+for _, row in ipairs(rows) do
+local control = toggle(t, row[1], row[3], false)
+local value = input(t, row[2], row[3] .. ' Value', row[4])
+local refresh = GuardRivalsCallback('Extras_DataRefresh', P.RefreshData)
+control:OnChanged(refresh)
+value:OnChanged(refresh)
+end
+end
 safeGroup(tab, 'R', 'Spoofer: Own Profile', function(box)
 box:AddLabel('Served through the game player-data proxy. Open your profile or shop to see them.', true)
-local rows = {
+end)
+safeTabs(tab, 'R', {
+{ 'Economy', function(t)
+profileRows(t, {
 { 'KPS1', 'KPS2', 'Event Currency', '9999' },
 { 'KPS3', 'KPS4', 'Weapon Keys', '999' },
 { 'KPS5', 'KPS6', 'Level', '999' },
+})
+end },
+{ 'Record', function(t)
+profileRows(t, {
 { 'KPS7', 'KPS8', 'Casual Wins', '99999' },
 { 'KPS9', 'KPSA', 'Ranked Wins', '9999' },
 { 'KPSB', 'KPSC', 'Casual Win %', '100' },
 { 'KPSD', 'KPSE', 'Ranked Win %', '100' },
 { 'KPSF', 'KPSG', 'Ranked ELO', '3600' },
 { 'KPSH', 'KPSI', 'Favorite Map', 'Arena' },
-}
-for _, row in ipairs(rows) do
-local control = toggle(box, row[1], row[3], false)
-local value = input(box, row[2], row[3] .. ' Value', row[4])
-local refresh = GuardRivalsCallback('Extras_DataRefresh', P.RefreshData)
-control:OnChanged(refresh)
-value:OnChanged(refresh)
-end
-end)
+})
+end },
+})
 end
 
 -- ---------------------------------------------------------------- UI Settings tab (config transfer)
@@ -31647,6 +31693,23 @@ P.ImportConfig(Options.KPZ1 and Options.KPZ1.Value)
 end),
 })
 end)
+end
+-- The longest original groups start collapsed so a tab is easy to scan; the open/closed state is saved with
+-- the config like any other group, so a saved config keeps whatever you left open.
+local LONG_GROUPS = {
+['Lightning'] = true, ['Weather'] = true, ['Lighting'] = true, ['Shadows & Environment'] = true,
+['Custom Crosshair'] = true, ['Crosshair Text'] = true, ['Crosshair Animation'] = true,
+['Camera View'] = true, ['Bullet Tracers'] = true, ['Movement Recorder'] = true,
+['Auto Loadout & Ban'] = true,
+}
+P.CollapseLongGroups = function()
+for _, tab in pairs(Library.Tabs or {}) do
+for title, groupbox in pairs(tab.Groupboxes or {}) do
+if LONG_GROUPS[title] and type(groupbox.SetCollapsed) == 'function' then
+pcall(groupbox.SetCollapsed, groupbox, true)
+end
+end
+end
 end
 end, function(err)
 RivalsRuntimeBridge.Extras.UiError = tostring(err)
@@ -42231,12 +42294,17 @@ Default = false,
 Tooltip = 'Plays effects when you damage someone: sound and chams.',
 })
 hitFeedbackToggle:OnChanged(GuardRivalsCallback('CombatFeedback_HitToggle', feedback.RefreshBinding))
-HitFeedbackGroup:AddToggle('P1S15T2', {
+local HitTabs = VisualsTab:AddLeftTabbox()
+local HitSoundTab = HitTabs:AddTab('Sound')
+local HitChamsTab = HitTabs:AddTab('Chams')
+local HitFlashTab = HitTabs:AddTab('Flash')
+local HitTextTab = HitTabs:AddTab('Text')
+HitSoundTab:AddToggle('P1S15T2', {
 Text = 'Play Sound',
 Default = false,
 Tooltip = 'Hitmarker sound. Headshots and body shots can use different sounds from Custom Sounds.',
 })
-local HitSoundSettings = HitFeedbackGroup:AddDependencyBox()
+local HitSoundSettings = HitSoundTab:AddDependencyBox()
 HitSoundSettings:AddDropdown('P1S15D1', {
 Values = customSoundNames,
 Multi = false,
@@ -42262,17 +42330,17 @@ HitSoundSettings:AddSlider('P1S15S4', {
 Text = 'Body Pitch', Default = 1, Min = 0.1, Max = 3, Rounding = 1, Compact = true,
 })
 HitSoundSettings:SetupDependencies({{Toggles.P1S15T2, true}})
-HitFeedbackGroup:AddToggle('P1S15T3', {
+HitSoundTab:AddToggle('P1S15T3', {
 Text = 'Disable Game Sound',
 Default = false,
 Tooltip = "Mutes the game's own hitmarker sound so only your custom hit sound plays.",
 }):OnChanged(GuardRivalsCallback('NativeRemovals_GameHitsound', RivalsRuntimeBridge.NativeRemovals.RefreshAll))
-HitFeedbackGroup:AddToggle('P1S15T4', {
+HitChamsTab:AddToggle('P1S15T4', {
 Text = 'Chams',
 Default = false,
 Tooltip = 'Briefly highlights the body of the player you hit.',
 })
-local HitChamsSettings = HitFeedbackGroup:AddDependencyBox()
+local HitChamsSettings = HitChamsTab:AddDependencyBox()
 HitChamsSettings:AddLabel('Cham Color'):AddColorPicker('P1S15C1', {
 Default = Color3.fromRGB(255, 0, 0),
 Transparency = 0,
@@ -42288,12 +42356,12 @@ Multi = false,
 Text = 'Cham Material',
 })
 HitChamsSettings:SetupDependencies({{Toggles.P1S15T4, true}})
-HitFeedbackGroup:AddToggle('PX4T1', {
+HitFlashTab:AddToggle('PX4T1', {
 Text = 'Screen Flash',
 Default = false,
 Tooltip = 'Briefly tints the whole screen when you hit someone.',
 })
-local HitFlashSettings = HitFeedbackGroup:AddDependencyBox()
+local HitFlashSettings = HitFlashTab:AddDependencyBox()
 HitFlashSettings:AddLabel('Flash Color'):AddColorPicker('PX4C1', {
 Default = Color3.fromRGB(255, 255, 255),
 Title = 'Hit Flash Color',
@@ -42305,12 +42373,12 @@ HitFlashSettings:AddSlider('PX4S2', {
 Text = 'Flash Duration', Default = 0.15, Min = 0.05, Max = 1, Rounding = 2, Compact = true,
 })
 HitFlashSettings:SetupDependencies({{Toggles.PX4T1, true}})
-HitFeedbackGroup:AddToggle('PX4T2', {
+HitTextTab:AddToggle('PX4T2', {
 Text = 'Notification',
 Default = false,
 Tooltip = 'Shows who you hit and for how much.',
 })
-local HitTextSettings = HitFeedbackGroup:AddDependencyBox()
+local HitTextSettings = HitTextTab:AddDependencyBox()
 HitTextSettings:AddInput('KPF2', {
 Text = 'Notification Text', Default = '', Placeholder = 'Hit %DNAME% (%NAME%) for %DMG% in %PART%',
 AllowEmpty = true, EmptyReset = '',
@@ -42324,12 +42392,17 @@ Default = false,
 Tooltip = 'Plays effects when you eliminate someone: sound and chams.',
 })
 killFeedbackToggle:OnChanged(GuardRivalsCallback('CombatFeedback_KillToggle', feedback.RefreshBinding))
-KillFeedbackGroup:AddToggle('P1S16T2', {
+local KillTabs = VisualsTab:AddRightTabbox()
+local KillSoundTab = KillTabs:AddTab('Sound')
+local KillChamsTab = KillTabs:AddTab('Chams')
+local KillFlashTab = KillTabs:AddTab('Flash')
+local KillTextTab = KillTabs:AddTab('Text')
+KillSoundTab:AddToggle('P1S16T2', {
 Text = 'Play Sound',
 Default = false,
 Tooltip = 'Plays a sound on every elimination. Add your own in Custom Sounds.',
 })
-local KillSoundSettings = KillFeedbackGroup:AddDependencyBox()
+local KillSoundSettings = KillSoundTab:AddDependencyBox()
 KillSoundSettings:AddDropdown('P1S16D1', {
 Values = customSoundNames,
 Multi = false,
@@ -42343,12 +42416,12 @@ KillSoundSettings:AddSlider('P1S16S2', {
 Text = 'Pitch', Default = 1, Min = 0.1, Max = 3, Rounding = 1, Compact = true,
 })
 KillSoundSettings:SetupDependencies({{Toggles.P1S16T2, true}})
-KillFeedbackGroup:AddToggle('P1S16T3', {
+KillChamsTab:AddToggle('P1S16T3', {
 Text = 'Chams',
 Default = false,
 Tooltip = 'Briefly highlights the body of the player you eliminated.',
 })
-local KillChamsSettings = KillFeedbackGroup:AddDependencyBox()
+local KillChamsSettings = KillChamsTab:AddDependencyBox()
 KillChamsSettings:AddLabel('Cham Color'):AddColorPicker('P1S16C1', {
 Default = Color3.fromRGB(255, 0, 0),
 Transparency = 0,
@@ -42364,12 +42437,12 @@ Multi = false,
 Text = 'Cham Material',
 })
 KillChamsSettings:SetupDependencies({{Toggles.P1S16T3, true}})
-KillFeedbackGroup:AddToggle('PX5T1', {
+KillFlashTab:AddToggle('PX5T1', {
 Text = 'Screen Flash',
 Default = false,
 Tooltip = 'Briefly tints the whole screen when you eliminate someone.',
 })
-local KillFlashSettings = KillFeedbackGroup:AddDependencyBox()
+local KillFlashSettings = KillFlashTab:AddDependencyBox()
 KillFlashSettings:AddLabel('Flash Color'):AddColorPicker('PX5C1', {
 Default = Color3.fromRGB(255, 60, 60),
 Title = 'Kill Flash Color',
@@ -42381,12 +42454,12 @@ KillFlashSettings:AddSlider('PX5S2', {
 Text = 'Flash Duration', Default = 0.3, Min = 0.05, Max = 1.5, Rounding = 2, Compact = true,
 })
 KillFlashSettings:SetupDependencies({{Toggles.PX5T1, true}})
-KillFeedbackGroup:AddToggle('PX5T2', {
+KillTextTab:AddToggle('PX5T2', {
 Text = 'Notification',
 Default = false,
 Tooltip = 'Shows who you eliminated.',
 })
-local KillTextSettings = KillFeedbackGroup:AddDependencyBox()
+local KillTextSettings = KillTextTab:AddDependencyBox()
 KillTextSettings:AddInput('KPF4', {
 Text = 'Notification Text', Default = '', Placeholder = 'Eliminated %DNAME% (%NAME%)',
 AllowEmpty = true, EmptyReset = '',
@@ -44548,6 +44621,7 @@ BuildRivalsRagebotUi(AutomationTab)
 BuildRivalsVisualsUi(Window)
 local MiscTab = BuildRivalsMiscUi(Window)
 BuildRivalsCosmeticsUi(MiscTab)
+RivalsRuntimeBridge.Extras.CollapseLongGroups()
 end
 local RivalsRuntime = {}
 function RivalsRuntime.ResetState()
