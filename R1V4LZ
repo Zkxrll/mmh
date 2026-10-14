@@ -233,7 +233,7 @@ end
 local Library = nil
 local ErrorReporter = nil
 local HttpService = game:GetService('HttpService')
-__ZkhHub_shared.obsidian_icons = function()
+__ZkhHub_shared.obsidian_icons_lucide = function()
 local Lucide = {}
 local IS_GETCUSTOMASSET_BROKEN = false
 if writefile and isfolder and makefolder and getcustomasset then
@@ -295,6 +295,89 @@ end
 return nil
 end
 return Lucide
+end
+-- Molto (https://github.com/notpoiu/Molto) icon registry: Lucide, Tabler, Heroicons, Phosphor and Fluent, 38,973 icons.
+-- Plain names resolve in Lucide ("check"). Pick another set with a prefix: "tabler:flame", "heroicons:bolt", "ph:lightning", "fluent:...".
+-- If Molto cannot load, the embedded Lucide subset (obsidian_icons_lucide) keeps the UI's own icons working.
+__ZkhHub_shared.obsidian_icons = function()
+local MOLTO_URL = "https://molto.pages.dev/source.lua"
+local PrefixAliases = { ph = "phosphor" }
+local Icons = {}
+local Molto
+do
+local Success, Registry = pcall(function()
+return loadstring(game:HttpGet(MOLTO_URL))()
+end)
+if Success and type(Registry) == "table" and type(Registry.GetAsset) == "function" then
+Molto = Registry
+else
+warn("[ZkxHub] Molto icon registry unavailable, using the built-in Lucide subset")
+end
+end
+local Providers = {}
+if Molto then
+for _, Id in Molto.Providers do
+Providers[Id] = true
+end
+end
+Icons.Registry = Molto
+local Legacy
+local function GetLegacy()
+if Legacy == nil then
+local Success, Module = pcall(RequireSharedModule, "obsidian_icons_lucide")
+Legacy = Success and Module or false
+end
+return Legacy or nil
+end
+local function Split(Name)
+local Prefix, Rest = string.match(Name, "^([%w_]+):([^:/]+)$")
+if Prefix then
+Prefix = string.lower(Prefix)
+Prefix = PrefixAliases[Prefix] or Prefix
+if Providers[Prefix] or Prefix == "lucide" then
+return Rest, Prefix
+end
+end
+return Name, nil
+end
+local Failed = {}
+function Icons.GetAsset(Name)
+if type(Name) ~= "string" or Name == "" then
+return nil
+end
+local IconName, Provider = Split(Name)
+local Key = Provider or "lucide"
+if Molto and not Failed[Key] then
+local Success, Asset = pcall(Molto.GetAsset, IconName, Provider)
+if Success then
+if not Asset then
+return nil
+end
+return {
+IconName = Name,
+Provider = Asset.Provider,
+Url = Asset.Url,
+ImageRectSize = Asset.ImageRectSize,
+ImageRectOffset = Asset.ImageRectOffset,
+FontFace = Asset.FontFace,
+FontPart = Asset.FontPart,
+Text = Asset.Text,
+}
+end
+Failed[Key] = true
+end
+if Key == "lucide" then
+local Fallback = GetLegacy()
+if Fallback then
+local Success, Asset = pcall(Fallback.GetAsset, IconName)
+if Success then
+return Asset
+end
+end
+end
+return nil
+end
+return Icons
 end
 __ZkhHub_shared.obsidian_library = function()
 local cloneref = (cloneref or clonereference or function(instance)
@@ -1441,7 +1524,7 @@ Library:ResetCursorIcon()
 return
 end
 local Icon = Library:GetCustomIcon(ImageId)
-assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 CursorCustomImage.Visible = true
 CursorCustomImage.Image = Icon.Url
 CursorCustomImage.ImageRectOffset = Icon.ImageRectOffset
@@ -1920,7 +2003,7 @@ Icon = NewIcon
 local IsNotEmpty = Icon and Trim(tostring(Icon)) ~= ""
 if IsNotEmpty then
 local CustomIcon = Library:GetCustomIcon(Icon)
-assert(CustomIcon, "Icon must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(CustomIcon, "Icon must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 IconImage = IconImage or New("ImageLabel", {
 BackgroundTransparency = 1,
 ImageColor3 = "FontColor",
@@ -2215,7 +2298,7 @@ end)
 function DraggableImageButton:SetIcon(NewIcon)
 Icon = NewIcon or Icon
 local CustomIcon = Library:GetCustomIcon(Icon)
-assert(CustomIcon, "Icon must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(CustomIcon, "Icon must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 IconImage.Image = CustomIcon.Url
 IconImage.ImageRectOffset = CustomIcon.ImageRectOffset
 IconImage.ImageRectSize = CustomIcon.ImageRectSize
@@ -6246,7 +6329,7 @@ ScaleType = Image.ScaleType,
 Parent = Box,
 }
 local Icon = Library:GetCustomIcon(ImageProperties.Image)
-assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 ImageProperties.Image = Icon.Url
 ImageProperties.ImageRectOffset = Icon.ImageRectOffset
 ImageProperties.ImageRectSize = Icon.ImageRectSize
@@ -6260,7 +6343,7 @@ end
 function Image:SetImage(NewImage)
 assert(typeof(NewImage) == "string", "Image must be a string.")
 local Icon = Library:GetCustomIcon(NewImage)
-assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(Icon, "Image must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 NewImage = Icon.Url
 Image.RectOffset = Icon.ImageRectOffset
 Image.RectSize = Icon.ImageRectSize
@@ -9957,7 +10040,7 @@ end
 end
 function Loading:SetLoadingIcon(Icon)
 local IconData = Library:GetCustomIcon(Icon)
-assert(IconData, "Image must be a valid Roblox asset or a valid URL or a valid lucide icon.")
+assert(IconData, "Image must be a valid Roblox asset or a valid URL or a valid icon name (e.g. 'check', 'tabler:flame', 'ph:lightning').")
 LoadingIcon.Image = IconData.Url
 LoadingIcon.ImageRectOffset = IconData.ImageRectOffset
 LoadingIcon.ImageRectSize = IconData.ImageRectSize
