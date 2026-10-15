@@ -3330,7 +3330,7 @@ RunService.RenderStepped:Wait()
 end
 KeyPicker:Update()
 end
-Picker.MouseButton1Click:Connect(function()
+local StartPicking = function()
 if Picking or Library.IsPicking then
 return
 end
@@ -3445,10 +3445,25 @@ end
 ActiveModifiers = if CurrentInput.KeyCode == Enum.KeyCode.Escape or Key == "Unknown" then {} else ActiveModifiers
 KeyPicker.Toggled = if ParentObj.Type == "Toggle" then ParentObj.Value else false
 KeyPicker:SetValue({ Key, KeyPicker.Mode, ActiveModifiers })
+-- A key still reported as held (alt-tab while binding Alt, a lost key-up) must not keep picking mode on forever
+local ReleaseDeadline = os.clock() + 1.5
 repeat
 task.wait()
-until not IsInputDown(CurrentInput) or UserInputService:GetFocusedTextBox()
+until not IsInputDown(CurrentInput) or UserInputService:GetFocusedTextBox() or os.clock() > ReleaseDeadline or Library.Unloaded
 SetPickingState(false)
+end
+Picker.MouseButton1Click:Connect(function()
+if Picking or Library.IsPicking then
+return
+end
+local Success, Err = pcall(StartPicking)
+if Picking then
+-- StartPicking clears the state itself, so this only runs after an error. Left set it disables every keybind.
+SetPickingState(false)
+end
+if not Success then
+warn("[ZkxHub] KeyPicker: " .. tostring(Err))
+end
 end)
 Picker.MouseButton2Click:Connect(MenuTable.Toggle)
 table.insert(KeyPicker.Connections, UserInputService.InputBegan:Connect(function(Input)
@@ -9636,7 +9651,13 @@ end
 if UserInputService:GetFocusedTextBox() then
 return
 end
-if Input.KeyCode == Library.ToggleKeybind then
+local ToggleKeybind = Library.ToggleKeybind
+if typeof(ToggleKeybind) == "table" then
+-- A KeyPicker handles its own key. While it is unbound (None/Unknown) nothing else could open the menu, so RightControl does.
+if (ToggleKeybind.Value == "None" or ToggleKeybind.Value == "Unknown") and Input.KeyCode == Enum.KeyCode.RightControl then
+Library:Toggle()
+end
+elseif Input.KeyCode == ToggleKeybind then
 Library:Toggle()
 end
 end))
@@ -12177,6 +12198,20 @@ load_config_name = 'UILoadConfigName',
 local defaults = args.defaults or {}
 local persisted_defaults = script_paths.load_ui_settings(defaults)
 local persist_menu_keybind = args.persist_menu_keybind ~= false
+-- Only a real keyboard key may be saved as the menu bind. Unbound (None/Unknown), Escape, a mouse button or a stale key name
+-- would leave the menu unreachable on the next launch, so those fall back to the default instead.
+local function NormalizeMenuKeybind(value, fallback)
+if type(value) == 'string' and value ~= '' and value ~= 'None' and value ~= 'Unknown' then
+local ok, key_code = pcall(function()
+return Enum.KeyCode[value]
+end)
+if ok and key_code and key_code ~= Enum.KeyCode.Unknown and key_code ~= Enum.KeyCode.Escape then
+return value
+end
+end
+return fallback or 'RightControl'
+end
+local default_menu_keybind = NormalizeMenuKeybind(defaults.menu_keybind, 'RightControl')
 local settings = {}
 local queue_on_teleport_connection = nil
 local queued_for_teleport = false
@@ -12317,7 +12352,10 @@ end,
 DoubleClick = true,
 })
 group:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind', {
-Default = persist_menu_keybind and persisted_defaults.menu_keybind or defaults.menu_keybind or 'RightControl',
+Default = persist_menu_keybind and NormalizeMenuKeybind(persisted_defaults.menu_keybind, default_menu_keybind) or default_menu_keybind,
+-- Always/Hold make the picker ignore its own key, so the toggle mode is the only one on offer
+Mode = 'Toggle',
+Modes = { 'Toggle' },
 NoUI = true,
 Text = 'Menu keybind'
 })
@@ -12357,13 +12395,8 @@ args.after_build(tab, group)
 end
 local function ResolveMenuKeybindValue()
 local option = options.MenuKeybind
-if option then
-local value = option.Value
-if type(value) == 'string' and value ~= '' then
-return value
-end
-end
-return persisted_defaults.menu_keybind or defaults.menu_keybind or 'RightControl'
+local fallback = NormalizeMenuKeybind(persisted_defaults.menu_keybind, default_menu_keybind)
+return NormalizeMenuKeybind(option and option.Value, fallback)
 end
 local function persist_ui_settings()
 script_paths.save_ui_settings({
@@ -42563,7 +42596,7 @@ auto_save_config = true,
 load_config_name = 'Legit',
 menu_keybind = 'RightControl',
 },
-persist_menu_keybind = false,
+persist_menu_keybind = true,
 queue_on_teleport = queue_on_teleport,
 before_save = function(shared_ui, config_name)
 local saveName = config_name or (shared_ui and shared_ui:resolve_save_config_name()) or 'Legit'
